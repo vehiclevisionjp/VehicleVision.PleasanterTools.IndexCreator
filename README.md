@@ -4,6 +4,8 @@ Pleasanter のサイト構成から必要なインデックスを計画・作成
 
 ## 配置する
 
+初回リリースは [v0.1.0](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/releases/tag/v0.1.0) です。Release の Assets から OS に合う ZIP と SHA256 を取得してください。
+
 .NET Runtime 10 を用意し、配布 ZIP の `IndexCreator` フォルダを `Implem.Pleasanter`・`Implem.CodeDefiner` と同じ階層へ置きます。
 
 ```text
@@ -63,7 +65,7 @@ dotnet IndexCreator.dll _views /y
 
 ## 現在の対応範囲
 
-Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を伴わない並べ替え、リンク項目、サマリを解析する初期版です。実運用データでの性能測定は未実施です。検証の範囲は [導入手順](_documents/導入手順.md) を参照してください。式索引などの未対応条件とキーサイズの制約は [利用ガイド](_documents/利用ガイド.md) を参照してください。
+Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を伴わない並べ替え、リンク項目、サマリを解析します。式索引などの未対応条件とキーサイズの制約は [利用ガイド](_documents/利用ガイド.md) を参照してください。
 
 ## 資料
 
