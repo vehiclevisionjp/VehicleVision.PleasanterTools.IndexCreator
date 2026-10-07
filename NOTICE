@@ -1,0 +1,16 @@
+VehicleVision.PleasanterTools.IndexCreator
+Copyright (C) 2026 PMC Co.,Ltd.
+SPDX-License-Identifier: AGPL-3.0-or-later
+Source: https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator
+
+Direct dependencies (verified 2026-10-07):
+NLog 6.2.1 - BSD-3-Clause - https://github.com/NLog/NLog
+Microsoft.Data.SqlClient 7.0.2 - MIT - https://github.com/dotnet/SqlClient
+Npgsql 10.0.3 - PostgreSQL License - https://github.com/npgsql/npgsql
+MySqlConnector 2.6.1 - MIT - https://github.com/mysql-net/MySqlConnector
+
+Third-party license texts are in ThirdPartyNotices.txt. Most transitive Microsoft
+packages and System.* packages are MIT; locked versions are in packages.lock.json.
+Microsoft.Data.SqlClient.SNI.runtime 6.0.2 uses Microsoft Software License Terms,
+not MIT. Its unmodified Windows native libraries retain those separate terms.
+Pleasanter reference submodule: AGPL v3, not included in distribution.

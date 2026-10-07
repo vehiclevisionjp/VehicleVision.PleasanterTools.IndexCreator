@@ -1,0 +1,13 @@
+**/bin
+**/obj
+.git
+_reference
+temp
+artifacts
+tests
+.vscode
+node_modules
+_development
+_documents
+.env
+.claude

@@ -1,0 +1,52 @@
+name: 参照サブモジュールの最新化
+on:
+  schedule:
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: reference-submodule-update
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_update: ${{ steps.check.outputs.needs_update }}
+      latest_tag: ${{ steps.check.outputs.latest_tag }}
+      latest_sha: ${{ steps.check.outputs.latest_sha }}
+      current_sha: ${{ steps.check.outputs.current_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: develop
+          persist-credentials: false
+      - id: check
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/reference-check.ps1
+  update:
+    needs: check
+    if: needs.check.outputs.needs_update == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.MY_REPO_AUTOMATION_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.MY_REPO_AUTOMATION_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - uses: actions/checkout@v7
+        with:
+          ref: develop
+          token: ${{ steps.app-token.outputs.token }}
+      - shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
+          LATEST_SHA: ${{ needs.check.outputs.latest_sha }}
+          CURRENT_SHA: ${{ needs.check.outputs.current_sha }}
+        run: ./scripts/reference-open-pr.ps1
