@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+.vs/
+.worktrees/
+temp/
+artifacts/
+TestResults/
+.env
+*.user
+*.local.json
+.claude/settings.local.json
+.claude/memory/
+logs/
+node_modules/
