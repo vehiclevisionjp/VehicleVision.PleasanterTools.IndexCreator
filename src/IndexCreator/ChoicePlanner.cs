@@ -73,7 +73,7 @@ public sealed class ChoicePlanner
     private static long WikiSite(long target, IReadOnlyList<Site> lookup)
     {
         var destination = lookup.FirstOrDefault(s => s.SiteId == target) ?? throw new UserError("A linked choice site was not found. No choice views were applied.");
-        if (destination.ReferenceType != "Wikis") throw new UserError("Choice links to tables are not supported yet. No choice views were applied.");
+        if (destination.ReferenceType != "Wikis") throw new UserError("Choice links to tables are out of scope. Create the master view for the linked table yourself. No choice views were applied.");
         return target;
     }
 }
