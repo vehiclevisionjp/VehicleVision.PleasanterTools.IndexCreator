@@ -112,7 +112,8 @@ public static class Json
     {
         var parents = new Dictionary<long, long>();
         foreach (var row in Parse(text).EnumerateArray())
-            if (row.Get("SiteId").TryGetInt64(out var id) && !parents.TryAdd(id, row.Get("ParentId").TryGetInt64(out var parent) ? parent : 0))
+            if (row.Get("SiteId") is { ValueKind: JsonValueKind.Number } site && site.TryGetInt64(out var id)
+                && !parents.TryAdd(id, row.Get("ParentId") is { ValueKind: JsonValueKind.Number } p && p.TryGetInt64(out var parent) ? parent : 0))
                 throw new UserError("Duplicate SiteId in input.");
         return parents;
     }

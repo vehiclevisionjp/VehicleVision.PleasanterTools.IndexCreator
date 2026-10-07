@@ -53,7 +53,13 @@ dotnet IndexCreator.dll _views /y
 
 対応範囲と変更時の扱いは [サイト View ガイド](_documents/サイトViewガイド.md) を参照してください。
 
-固定選択肢のマスタ View も `choice-lists` / `_choice-lists` で生成できます。[選択肢 View ガイド](_documents/選択肢Viewガイド.md) を参照してください。
+固定選択肢のマスタ View も `choice-lists` / `_choice-lists` で生成できます。選択肢の編集は再実行しなくても View に反映されます。[選択肢 View ガイド](_documents/選択肢Viewガイド.md) を参照してください。
+
+特定のフォルダ配下やサイトは `--exclude-tree` / `--exclude-site` で View の対象から外せます。
+
+## 稼働中の環境で実行する
+
+索引はオンラインで作成し、ロック待ちは `--lock-timeout`（既定5秒）で打ち切って再試行します。業務を止めずに実行できるよう設計しています。オンライン作成に対応しない SQL Server のエディションでは停止するので、保守時間帯に `--offline` を付けて実行してください。詳しくは [利用ガイド](_documents/利用ガイド.md#稼働中の環境で実行する) を参照してください。
 
 ## 現在の対応範囲
 

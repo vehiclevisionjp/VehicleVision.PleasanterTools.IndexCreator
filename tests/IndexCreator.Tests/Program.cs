@@ -27,6 +27,8 @@ var spec = analysis.Indexes.Single(i => i.Keys.Any(k => k.Column == "ClassA"));
 Check(spec.Keys.Select(k => k.Column).SequenceEqual(["SiteId", "ClassA", "NumA", "UpdatedTime", "ResultId"]), "Equality before sort and tie breakers");
 Check(spec.Keys[2].Desc, "Sort descending");
 Check(Plan(Dbms.MySQL, filtered).Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA" && k.Prefix == 100)), "MySQL TEXT prefix");
+var partial = Plan(Dbms.PostgreSQL, """{"Columns":[{"ColumnName":"ClassA","SearchType":"PartialMatch","ChoicesText":"10,受付"}],"Views":[{"ColumnFilterHash":{"ClassA":"[\"10\"]"}}]}""");
+Check(!partial.Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")) && partial.Diagnostics.Any(d => d.Message.Contains("search type to exact match", StringComparison.Ordinal)), "Partial-match choice filter explains how to enable an index");
 var range = Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterHash":{"DateA":"[\"2026-01-01,2026-12-31\"]"},"ColumnSorterHash":{"CreatedTime":"desc"}}]}""");
 Check(range.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "DateA"]), "Range stops sort coverage");
 var prefix = Plan(Dbms.PostgreSQL, """{"Columns":[{"ColumnName":"ClassA","SearchType":3}],"Views":[{"ColumnFilterHash":{"ClassA":"A"}}]}""");
@@ -140,6 +142,8 @@ Check(Remaining("--exclude-site", "3,5").SequenceEqual([4L]), "Single site exclu
 Check(Remaining("--exclude-site", "1").SequenceEqual([3L, 4L, 5L]), "Single folder exclusion does not cascade");
 Check(Remaining("--exclude-tree", "2", "--exclude-site", "4").SequenceEqual([5L]), "Both exclusion modes combine");
 Reject(() => Remaining("--exclude-tree", "99"), "Unknown excluded SiteId stops instead of being ignored");
+var flat = """[{"SiteId":8,"ReferenceType":"Results","RecordCount":0,"SiteSettings":{}},{"SiteId":9,"ReferenceType":"Results","RecordCount":0,"SiteSettings":{}}]""";
+Check(Options.Parse(["views", "--sites", "s.json", "--exclude-tree", "8"]).Exclusion!.Apply(Json.ReadSites(flat), Json.ReadSiteParents(flat)).Single().SiteId == 9, "Sites without ParentId are treated as top level");
 Reject(() => Options.Parse(["plan", "--exclude-site", "3"]), "Exclusions are limited to views");
 Reject(() => Options.Parse(["views", "--exclude-site", "3,3"]), "Duplicate excluded SiteId");
 Check(Options.Parse(["_choice-lists", "--exclude-tree", "1, 2"]).Exclusion!.Trees.SetEquals([1L, 2L]), "Choice lists accept exclusions");
@@ -160,6 +164,8 @@ if (args.Contains("--integration"))
     await database.Open(default);
     var d = new SqlDialect(dbms, schema);
     if (dbms == Dbms.PostgreSQL) await database.Execute($"CREATE SCHEMA IF NOT EXISTS {d.Quote(schema)}");
+    // 本体の MySQL は utf8mb4_general_ci で DB を作る（Definitions/Sqls/MySQL/CreateDatabase.sql）。
+    if (dbms == Dbms.MySQL) await database.Execute("ALTER DATABASE `IndexCreatorTest` COLLATE utf8mb4_general_ci");
     var str = dbms switch { Dbms.SQLServer => "nvarchar(max)", Dbms.MySQL => "longtext", _ => "text" };
     var classType = dbms switch { Dbms.SQLServer => "nvarchar(1024)", Dbms.PostgreSQL => "varchar(1024)", _ => "text" };
     foreach (var table in new[] { "Results", "Issues", "Wikis" })
@@ -295,6 +301,11 @@ if (args.Contains("--integration"))
         var actual = (await ReadChoices(liveChoices[0])).OrderBy(c => c.Value, StringComparer.Ordinal).ToArray();
         Check(expected.Length == 9 && actual.SequenceEqual(expected), "Built-in parsing matches Pleasanter choice rules: " + string.Join(" | ", actual.Except(expected)) + " <> " + string.Join(" | ", expected.Except(actual)));
         Check((await ReadChoices(liveChoices[1])).Single() == new ChoiceRow("1", "表示", "短縮"), "Second column of the same site");
+        await using (var join = query.CreateCommand())
+        {
+            join.CommandText = $"SELECT COUNT(*) FROM {d.Table("Results")} r INNER JOIN {d.Table(liveChoices[0].Name)} v ON v.{d.Quote("Value")} = r.{d.Quote("ClassA")}";
+            Check(Convert.ToInt64(await join.ExecuteScalarAsync()) >= 0, "Choice values join with Pleasanter columns without a collation conflict");
+        }
         await SaveSite(11, Settings(lines + "999,追加\n[[Users]]\n"), false);
         var edited = await ReadChoices(liveChoices[0]);
         Check(edited.Count == 10 && edited.Contains(new ChoiceRow("999", "追加", "追加")), "Choice edits appear without recreating the view");

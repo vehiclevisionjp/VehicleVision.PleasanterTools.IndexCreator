@@ -5,6 +5,12 @@ namespace VehicleVision.PleasanterTools.IndexCreator;
 public sealed class SqlDialect(Dbms dbms, string schema, bool offline = false)
 {
     public Dbms Dbms => dbms;
+    // MySQL の選択肢 View の出力列に付ける照合順序。本体の列と結合したときに照合順序の衝突を起こさないよう、スキーマの既定に合わせる。
+    public string? Collation
+    {
+        get;
+        set => field = value == null || System.Text.RegularExpressions.Regex.IsMatch(value, "^[A-Za-z0-9_]{1,64}$") ? value : throw new UserError("Invalid collation name.");
+    }
     public string Quote(string name) => dbms switch
     {
         Dbms.SQLServer => "[" + name.Replace("]", "]]", StringComparison.Ordinal) + "]",
@@ -49,6 +55,7 @@ public sealed class SqlDialect(Dbms dbms, string schema, bool offline = false)
     {
         var id = siteId.ToString(CultureInfo.InvariantCulture);
         var name = Literal(column);
+        var collate = Collation == null ? "" : " COLLATE " + Collation;
         var q = Quote;
         return dbms switch
         {
@@ -79,7 +86,7 @@ public sealed class SqlDialect(Dbms dbms, string schema, bool offline = false)
                 """,
             // MySQL は sql_mode でバックスラッシュの扱いが変わるため、バックスラッシュを含むリテラルを使わない。
             _ => $"""
-                SELECT REPLACE(z.f1, CHAR(1 USING utf8mb4), ',') AS {q("Value")}, REPLACE(COALESCE(NULLIF(z.f2, ''), z.f1), CHAR(1 USING utf8mb4), ',') AS {q("Text")}, REPLACE(COALESCE(NULLIF(z.f3, ''), NULLIF(z.f2, ''), z.f1), CHAR(1 USING utf8mb4), ',') AS {q("TextMini")}
+                SELECT REPLACE(z.f1, CHAR(1 USING utf8mb4), ','){collate} AS {q("Value")}, REPLACE(COALESCE(NULLIF(z.f2, ''), z.f1), CHAR(1 USING utf8mb4), ','){collate} AS {q("Text")}, REPLACE(COALESCE(NULLIF(z.f3, ''), NULLIF(z.f2, ''), z.f1), CHAR(1 USING utf8mb4), ','){collate} AS {q("TextMini")}
                 FROM (
                 SELECT SUBSTRING_INDEX(y.e, ',', 1) AS f1, IF(y.e LIKE '%,%', SUBSTRING_INDEX(SUBSTRING_INDEX(y.e, ',', 2), ',', -1), NULL) AS f2, IF(y.e LIKE '%,%,%', SUBSTRING_INDEX(SUBSTRING_INDEX(y.e, ',', 3), ',', -1), NULL) AS f3,
                 ROW_NUMBER() OVER (PARTITION BY CAST(SUBSTRING_INDEX(y.line, ',', 1) AS BINARY) ORDER BY y.n) AS rn

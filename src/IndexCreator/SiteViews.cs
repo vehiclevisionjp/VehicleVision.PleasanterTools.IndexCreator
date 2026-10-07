@@ -125,6 +125,7 @@ public sealed partial class Database
         await VerifySnapshot();
         await ValidateColumns(views.SelectMany(v => v.RequiredColumns()).ToArray(), ct);
         if (choices && config.Dbms == Dbms.SQLServer) await RequireChoiceFunctions(ct);
+        if (choices && config.Dbms == Dbms.MySQL) dialect.Collation = await ReadSchemaCollation(ct);
         await SetLockTimeout(true, ct);
         var existing = await ReadViewNames(ct);
         var rebuild = new HashSet<string>(StringComparer.Ordinal);
@@ -159,6 +160,11 @@ public sealed partial class Database
                 await Retry(() => Execute("DROP VIEW " + dialect.Table(name) + ";", ct), ct);
                 RuntimeLog.WriteLine("Dropped view " + SiteView.ConsoleIdentifier(name));
             }
+    }
+    public async Task<string?> ReadSchemaCollation(CancellationToken ct)
+    {
+        await using var cmd = Command("SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=@schema");
+        return await cmd.ExecuteScalarAsync(ct) as string;
     }
     // STRING_SPLIT の ordinal と TRIM の除去文字指定は SQL Server 2022 以降と Azure SQL で使える。
     // STRING_SPLIT と OPENJSON は互換性レベル 130 以上を要する。

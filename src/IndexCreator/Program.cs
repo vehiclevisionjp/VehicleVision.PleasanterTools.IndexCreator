@@ -127,6 +127,7 @@ public static class Program
         var views = choices ? new ChoicePlanner(options.Path).Generate(targets) : new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path)).Generate(targets);
         if (database != null) await database.ValidateColumns(views.SelectMany(v => v.RequiredColumns()).ToArray(), ct);
         var dialect = new SqlDialect(config.Dbms, config.Schema);
+        if (choices && database != null && config.Dbms == Dbms.MySQL) dialect.Collation = await database.ReadSchemaCollation(ct);
         var drops = options.Prune ? existing.Where(n => SiteView.IsManaged(n, choices)).Where(n => !views.Any(v => v.Name == n)).ToArray() : [];
         foreach (var view in views) RuntimeLog.WriteLine($"{(existing.Contains(view.Name) ? "Update" : "Create"),-7} VIEW {view.ConsoleName} Columns: {view.Columns.Count}");
         foreach (var name in drops) RuntimeLog.WriteLine("Drop    VIEW " + SiteView.ConsoleIdentifier(name));
