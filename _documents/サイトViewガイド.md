@@ -1,6 +1,7 @@
 # サイト一覧の SQL View
 
 Results / Issues / Wikis の各サイトに、一覧の表示列と項目名を反映した SQL View を作ります。インデックスの操作とは別のコマンドです。件数の下限に関係なく対象サイトの View を生成します。
+Wikis には Status と Class / Num / Date / Check / Description / Attachments 列がないため、一覧列に指定すると停止します。
 
 ```powershell
 dotnet IndexCreator.dll views /p "C:\web\pleasanter\Implem.Pleasanter"

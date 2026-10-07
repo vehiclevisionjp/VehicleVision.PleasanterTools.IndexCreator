@@ -25,7 +25,7 @@ public sealed class ChoicePlanner
             {
                 var name = column.Get("ColumnName").Text();
                 var text = column.Get("ChoicesText").Text();
-                if (text == "") continue;
+                if (text == "" || column.Get("ControlType").Text() is not ("" or "ChoicesText")) continue;
                 if (!Regex.IsMatch(name, "^[A-Za-z][A-Za-z0-9]*$", RegexOptions.CultureInvariant)) throw new UserError("Invalid choice column name.");
                 var rows = new List<ChoiceRow>();
                 var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -37,6 +37,7 @@ public sealed class ChoicePlanner
                     var value = values[0];
                     var label = values.Length > 1 && values[1] != "" ? values[1] : value;
                     var mini = values.Length > 2 && values[2] != "" ? values[2] : label;
+                    // Pleasanter 本体は同じ値の先頭行だけを採用する。
                     if (seen.Add(value)) rows.Add(new(value, label, mini));
                 }
                 views.Add(new(site.SiteId, site.ReferenceType, [new("Value", "Value"), new("Text", "Text"), new("TextMini", "TextMini")], site.Title, rows, name));

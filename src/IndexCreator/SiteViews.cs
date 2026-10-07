@@ -57,11 +57,12 @@ public sealed class ViewPlanner(Dbms dbms, string? applicationPath = null)
     private readonly Dictionary<string, IReadOnlyList<JsonElement>> definitionCache = new(StringComparer.Ordinal);
     private static bool PhysicalColumn(string name, string table) => name switch
     {
-        "SiteId" or "Title" or "TitleBody" or "Body" or "Comments" or "Ver" or "Status" or "Manager" or "Owner" or "Creator" or "Updator" or "CreatedTime" or "UpdatedTime" or "Locked" => true,
+        "Status" => table != "Wikis",
+        "SiteId" or "Title" or "TitleBody" or "Body" or "Comments" or "Ver" or "Manager" or "Owner" or "Creator" or "Updator" or "CreatedTime" or "UpdatedTime" or "Locked" => true,
         "ResultId" => table == "Results",
         "WikiId" => table == "Wikis",
         "IssueId" or "StartTime" or "CompletionTime" or "WorkValue" or "ProgressRate" or "RemainingWorkValue" => table == "Issues",
-        _ => Regex.IsMatch(name, "^(Class|Num|Date|Check|Description|Attachments)([A-Z]|[0-9]{3})$", RegexOptions.CultureInvariant)
+        _ => table != "Wikis" && Regex.IsMatch(name, "^(Class|Num|Date|Check|Description|Attachments)([A-Z]|[0-9]{3})$", RegexOptions.CultureInvariant)
     };
     private IReadOnlyList<JsonElement> Definitions(string table)
     {
