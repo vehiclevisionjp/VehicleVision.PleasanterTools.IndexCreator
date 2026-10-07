@@ -1,0 +1,16 @@
+[
+  {
+    "SiteId": 100,
+    "ReferenceType": "Results",
+    "RecordCount": 20000,
+    "SiteSettings": {
+      "Columns": [
+        { "ColumnName": "ClassA", "ChoicesText": "New\nClosed" },
+        { "ColumnName": "NumA", "Nullable": true }
+      ],
+      "Views": [
+        { "Id": 1, "ColumnFilterHash": { "ClassA": "[\"New\"]" }, "ColumnSorterHash": { "NumA": "desc" } }
+      ]
+    }
+  }
+]
