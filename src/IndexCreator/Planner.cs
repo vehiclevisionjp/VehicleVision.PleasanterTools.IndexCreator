@@ -26,7 +26,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
     {
         var list = keys.DistinctBy(k => k.Column).ToArray();
         if (list.Length < 2) return;
-        indexes.Add(new(s.ReferenceType, list));
+        indexes.Add(new(s.ReferenceType, list, s.SiteId));
         if (dbms == Dbms.SQLServer && list.Any(k => ColumnKind(k.Column) == Kind.Class))
             Note(s, "Class keys may exceed the SQL Server 1700-byte limit. Review maximum value lengths before applying.");
     }
@@ -76,7 +76,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
     {
         indexes.Clear(); diagnostics.Clear();
         foreach (var site in sites) Json.ValidateSettings(site.SiteSettings);
-        foreach (var s in sites.Where(s => s.RecordCount >= minRecords))
+        foreach (var s in sites.Where(s => s.RecordCount >= minRecords).OrderBy(s => s.SiteId))
         {
             if (dbms != Dbms.PostgreSQL) Add(s, new[] { new Key("SiteId") }.Concat(Tie(s)));
             var links = Links(s);

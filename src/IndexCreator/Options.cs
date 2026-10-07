@@ -8,8 +8,8 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
     public static Options Parse(string[] args)
     {
         if (args.Length == 0 || args[0] is "--help" or "-h" or "help") return new("help", null, null, null, null, 10000, 100, false, false, false, false, null);
-        var action = args[0] == "_rds" ? "apply" : args[0];
-        if (action is not ("plan" or "apply")) throw new UserError("Unknown action. Use plan, apply or _rds.");
+        var action = args[0] switch { "_rds" => "apply", "_views" => "views-apply", _ => args[0] };
+        if (action is not ("plan" or "apply" or "views" or "views-apply")) throw new UserError("Unknown action. Use plan, apply, views or _views.");
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         var flags = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 1; i < args.Length; i++)
@@ -30,8 +30,8 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
         }
         var prefix = (int)Number("--mysql-prefix", 100, 191);
         if (prefix < 1) throw new UserError("MySQL prefix must be between 1 and 191.");
-        if (flags.Contains("--check")) action = "plan";
-        if (action == "apply" && V("--sites") != null) throw new UserError("Apply requires a live database; --sites is only available for plan.");
+        if (flags.Contains("--check")) action = action.StartsWith("views", StringComparison.Ordinal) ? "views" : "plan";
+        if (action is "apply" or "views-apply" && V("--sites") != null) throw new UserError("Apply requires a live database; --sites is only available for planning.");
         if (V("--sites") != null && flags.Contains("--prune")) throw new UserError("Prune requires a live database inventory.");
         return new(action, V("-p"), V("--sites"), V("--dbms"), V("--schema"), Number("--min-records", 10000, long.MaxValue), prefix, flags.Contains("--include-filter-columns"), flags.Contains("--offline"), flags.Contains("--prune"), flags.Contains("--yes"), V("--output"), flags.Contains("--force"));
     }

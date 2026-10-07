@@ -5,7 +5,7 @@ using Npgsql;
 
 namespace VehicleVision.PleasanterTools.IndexCreator;
 
-public sealed class Database : IAsyncDisposable
+public sealed partial class Database : IAsyncDisposable
 {
     private readonly Configuration config;
     private readonly SqlDialect dialect;
@@ -53,7 +53,7 @@ public sealed class Database : IAsyncDisposable
         var q = dialect.Quote;
         var count = config.Dbms == Dbms.SQLServer ? "COUNT_BIG(*)" : "COUNT(*)";
         var sql = $"""
-            SELECT s.{q("SiteId")}, s.{q("ReferenceType")}, s.{q("SiteSettings")}, COALESCE(r.cnt, i.cnt, 0)
+            SELECT s.{q("SiteId")}, s.{q("ReferenceType")}, s.{q("SiteSettings")}, COALESCE(r.cnt, i.cnt, 0), s.{q("Title")}
             FROM {dialect.Table("Sites")} s
             LEFT JOIN (SELECT {q("SiteId")}, {count} AS cnt FROM {dialect.Table("Results")} GROUP BY {q("SiteId")}) r ON r.{q("SiteId")}=s.{q("SiteId")} AND s.{q("ReferenceType")}='Results'
             LEFT JOIN (SELECT {q("SiteId")}, {count} AS cnt FROM {dialect.Table("Issues")} GROUP BY {q("SiteId")}) i ON i.{q("SiteId")}=s.{q("SiteId")} AND s.{q("ReferenceType")}='Issues'
@@ -68,7 +68,7 @@ public sealed class Database : IAsyncDisposable
             if (reader.IsDBNull(2)) throw new UserError("A site has missing SiteSettings. No changes were applied.");
             var settings = Json.Parse(reader.GetString(2));
             Json.ValidateSettings(settings);
-            sites.Add(new(Convert.ToInt64(reader.GetValue(0)), reader.GetString(1), settings, Convert.ToInt64(reader.GetValue(3))));
+            sites.Add(new(Convert.ToInt64(reader.GetValue(0)), reader.GetString(1), settings, Convert.ToInt64(reader.GetValue(3)), reader.IsDBNull(4) ? "" : reader.GetString(4)));
         }
         return sites;
     }
@@ -135,8 +135,8 @@ public sealed class Database : IAsyncDisposable
         {
             if (expectedSites == null) return;
             var current = await ReadSites(ct);
-            var snapshot = expectedSites.ToDictionary(s => s.SiteId, s => s.ReferenceType + "|" + s.SiteSettings.GetRawText());
-            if (current.Count != snapshot.Count || current.Any(s => !snapshot.TryGetValue(s.SiteId, out var value) || value != s.ReferenceType + "|" + s.SiteSettings.GetRawText()))
+            var snapshot = expectedSites.ToDictionary(s => s.SiteId, s => s.ReferenceType + "|" + s.Title + "|" + s.SiteSettings.GetRawText());
+            if (current.Count != snapshot.Count || current.Any(s => !snapshot.TryGetValue(s.SiteId, out var value) || value != s.ReferenceType + "|" + s.Title + "|" + s.SiteSettings.GetRawText()))
                 throw new UserError("Site configuration changed during apply. No further changes were applied; re-run plan.");
         }
         await CheckSiteSnapshot();
@@ -145,7 +145,7 @@ public sealed class Database : IAsyncDisposable
         {
             if (c.Kind == ChangeKind.Repair) await Execute(dialect.Drop(c.Spec.Table, c.Name), ct);
             await Execute(dialect.Create(c.Spec), ct);
-            Console.WriteLine("Created " + c.Name);
+            RuntimeLog.WriteLine("Created " + c.Name);
         }
         var refreshed = await ReadIndexes(ct);
         foreach (var c in changes.Where(c => c.Kind is not ChangeKind.Drop))
@@ -156,12 +156,14 @@ public sealed class Database : IAsyncDisposable
         {
             if (!IndexSpec.IsManaged(c.Spec.Table, c.Name)) throw new UserError("Refusing to remove an unmanaged index.");
             await Execute(dialect.Drop(c.Spec.Table, c.Name), ct);
-            Console.WriteLine("Dropped " + c.Name);
+            RuntimeLog.WriteLine("Dropped " + c.Name);
         }
     }
     public async Task Execute(string sql, CancellationToken ct = default)
     {
         await using var cmd = Command(sql);
+        // DDL は引用済み識別子を使う。SQL Server の VIEW 定義をパラメーター付きバッチへ変換しない。
+        cmd.Parameters.Clear();
         await cmd.ExecuteNonQueryAsync(ct);
     }
     public async ValueTask DisposeAsync()

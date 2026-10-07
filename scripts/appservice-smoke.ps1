@@ -42,6 +42,7 @@ try {
         Invoke-Checked -Arguments @('plan','--sites',$sites) -ExpectedText 'Desired indexes: 2'
         Invoke-Checked -Arguments @('_rds','/p',$pleasanter,'/c','--sites',$sites) -ExpectedText 'Desired indexes: 2'
         Invoke-Checked -Arguments @('_rds','-p',$pleasanter,'/c','--sites',$sites) -ExpectedText 'Desired indexes: 2'
+        Invoke-Checked -Arguments @('views','/p',$pleasanter,'--sites',$sites) -ExpectedText 'View_vvplic_Results_'
         $env:INDEXCREATOR_DBMS = 'PostgreSQL'
         Invoke-Checked -Arguments @('plan','--sites',$sites) -ExpectedText 'Desired indexes: 1'
         $env:INDEXCREATOR_DBMS = 'SQLServer'
@@ -50,6 +51,12 @@ try {
         # wwwroot 直下に本体ファイルを置く配置は /p wwwroot で指定する。
         Copy-Item (Join-Path $pleasanter 'App_Data') -Destination $wwwroot -Recurse
         Invoke-Checked -Arguments @('_rds','/p',$wwwroot,'/c','--sites',$sites) -ExpectedText 'Desired indexes: 2'
+        $logFiles = @(Get-ChildItem -LiteralPath (Join-Path $outside 'logs') -Filter 'VehicleVision.PleasanterTools.IndexCreator_*.log')
+        if ($logFiles.Count -eq 0) { throw 'Execution log was not created in the CodeDefiner-compatible logs folder.' }
+        $logText = ($logFiles | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+        if ($logText -match 'PRIVATE_TEST_MARKER_DO_NOT_LOG' -or $logText -match '[^\x00-\x7F]') { throw 'Execution logs leaked secret or non-ASCII data.' }
+        if ($logText -notmatch 'Database operation failed' -or $logText -notmatch 'Desired indexes: 2') { throw 'Execution logs missed result or error messages.' }
+        $script:count++
     } finally { Pop-Location }
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }

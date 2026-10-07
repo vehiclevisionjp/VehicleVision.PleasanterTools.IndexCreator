@@ -150,6 +150,11 @@
           "Microsoft.Extensions.Logging.Abstractions": "8.0.2"
         }
       },
+      "NLog": {
+        "type": "Transitive",
+        "resolved": "6.2.1",
+        "contentHash": "fTGNuJyzkgDc1TBEGXF+FMT4b6kB7gygkSN3dLei2Ziiwx/rugXA+OyyFWZ60P1G/+SzzSKiWHlQ4OklC8AgRg=="
+      },
       "Npgsql": {
         "type": "Transitive",
         "resolved": "10.0.3",
@@ -196,6 +201,7 @@
         "dependencies": {
           "Microsoft.Data.SqlClient": "[7.0.2, )",
           "MySqlConnector": "[2.6.1, )",
+          "NLog": "[6.2.1, )",
           "Npgsql": "[10.0.3, )"
         }
       }

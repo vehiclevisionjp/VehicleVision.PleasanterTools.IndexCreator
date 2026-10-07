@@ -40,7 +40,18 @@ dotnet IndexCreator.dll plan --prune
 dotnet IndexCreator.dll _rds --prune /y
 ```
 
-管理名は `vvic_v1_<テーブル>_<定義ハッシュ16桁>`。標準索引・他ツールの索引・列・テーブルは削除しません。新規作成と確認が成功してから古い管理索引を整理します。CodeDefiner がテーブルを作り直した後も `_rds /y` を再実行してください。
+管理名は `IX_vvplic_{ReferenceType}_{SiteId}_{用途}_{定義ハッシュ16桁}`。同じ物理索引を複数サイトが使う場合は共有します。標準索引・他ツールの索引・列・テーブルは削除しません。新規作成と確認が成功してから古い管理索引を整理します。CodeDefiner がテーブルを作り直した後も `_rds /y` を再実行してください。
+
+## サイト一覧の SQL View
+
+表示列の順序と項目名を反映した View も作成できます。名前は `View_vvplic_{ReferenceType}_{SiteId}_{SiteName}` です。
+
+```powershell
+dotnet IndexCreator.dll views
+dotnet IndexCreator.dll _views /y
+```
+
+対応範囲と変更時の扱いは [サイト View ガイド](_documents/サイトViewガイド.md) を参照してください。
 
 ## 現在の対応範囲
 

@@ -1,9 +1,11 @@
 [
   {
     "SiteId": 100,
+    "Title": "案件",
     "ReferenceType": "Results",
     "RecordCount": 20000,
     "SiteSettings": {
+      "GridColumns": ["ResultId", "ClassA", "NumA", "UpdatedTime"],
       "Columns": [
         { "ColumnName": "ClassA", "ChoicesText": "New\nClosed" },
         { "ColumnName": "NumA", "Nullable": true }

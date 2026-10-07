@@ -6,18 +6,27 @@ using System.Text.RegularExpressions;
 namespace VehicleVision.PleasanterTools.IndexCreator;
 
 public enum Dbms { SQLServer, PostgreSQL, MySQL }
-public sealed record Site(long SiteId, string ReferenceType, JsonElement SiteSettings, long RecordCount);
+public sealed record Site(long SiteId, string ReferenceType, JsonElement SiteSettings, long RecordCount, string Title = "");
 public sealed record Key(string Column, bool Desc = false, int Prefix = 0, bool Pattern = false)
 {
     public string Signature => $"{Column}:{(Desc ? "D" : "A")}:{Prefix}:{Pattern}";
 }
-public sealed record IndexSpec(string Table, IReadOnlyList<Key> Keys)
+public sealed record IndexSpec(string Table, IReadOnlyList<Key> Keys, long SiteId = 1)
 {
-    public const string Prefix = "vvic_v1_";
+    public const string Prefix = "IX_vvplic_";
     public string Signature => Table + "|" + string.Join("|", Keys.Select(k => k.Signature));
-    public string Name => Prefix + Table + "_" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Signature)))[..16];
+    public string Name
+    {
+        get
+        {
+            var prefix = Prefix + Table + "_" + SiteId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_";
+            var purpose = Keys.FirstOrDefault(k => k.Column != "SiteId")?.Column ?? "SiteId";
+            var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Signature)))[..16];
+            return prefix + purpose[..Math.Min(purpose.Length, 63 - prefix.Length - 17)] + "_" + hash;
+        }
+    }
     public bool Covers(IndexSpec other) => Table == other.Table && Keys.Count >= other.Keys.Count && Keys.Take(other.Keys.Count).SequenceEqual(other.Keys);
-    public static bool IsManaged(string table, string name) => Regex.IsMatch(name, "^" + Prefix + Regex.Escape(table) + "_[0-9a-f]{16}$", RegexOptions.CultureInvariant);
+    public static bool IsManaged(string table, string name) => table is "Results" or "Issues" or "Wikis" && name.Length <= 63 && Regex.IsMatch(name, "^" + Prefix + Regex.Escape(table) + "_[1-9][0-9]{0,18}_[A-Za-z0-9]+_[0-9a-f]{16}$", RegexOptions.CultureInvariant);
 }
 public sealed record ExistingIndex(string Table, string Name, IReadOnlyList<Key> Keys, bool Valid = true, bool Plain = true)
 {
@@ -93,7 +102,7 @@ public static class Json
                 throw new UserError("Each site requires a positive SiteId and a non-negative RecordCount.");
             var settings = row.Get("SiteSettings").Object();
             ValidateSettings(settings);
-            sites.Add(new(id, table, settings, count));
+            sites.Add(new(id, table, settings, count, row.Get("Title").Text()));
         }
         if (sites.Select(s => s.SiteId).Distinct().Count() != sites.Count) throw new UserError("Duplicate SiteId in input.");
         return sites;

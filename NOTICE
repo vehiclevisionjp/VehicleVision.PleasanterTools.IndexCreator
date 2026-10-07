@@ -4,6 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Source: https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator
 
 Direct dependencies (verified 2026-10-07):
+NLog 6.2.1 - BSD-3-Clause - https://github.com/NLog/NLog
 Microsoft.Data.SqlClient 7.0.2 - MIT - https://github.com/dotnet/SqlClient
 Npgsql 10.0.3 - PostgreSQL License - https://github.com/npgsql/npgsql
 MySqlConnector 2.6.1 - MIT - https://github.com/mysql-net/MySqlConnector

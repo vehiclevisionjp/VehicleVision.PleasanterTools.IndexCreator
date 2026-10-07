@@ -42,6 +42,12 @@ Check(!Plan(Dbms.SQLServer, """{"Views":[{"ColumnFilterHash":{"ClassA~2,ClassB":
 Check(spec.Name == new IndexSpec(spec.Table, spec.Keys.ToArray()).Name, "Stable index name");
 Check(spec.Name.Length < 63 && IndexSpec.IsManaged(spec.Table, spec.Name), "Portable owned name");
 Check(!IndexSpec.IsManaged("Results", "vvic_v1_Results_standard"), "Unrelated prefix not owned");
+Check(spec.Name.StartsWith("IX_vvplic_Results_1_ClassA_", StringComparison.Ordinal), "Readable index purpose");
+var sharedSites = new[] { SiteWith("{}") with { SiteId = 12 }, SiteWith("{}") with { SiteId = 3 } };
+var sharedIndex = new Planner(Dbms.SQLServer).Analyze(sharedSites).Indexes.Single();
+Check(sharedIndex.SiteId == 3 && new Planner(Dbms.SQLServer).Analyze(sharedSites.Reverse().ToArray()).Indexes.Single().Name == sharedIndex.Name, "Shared index uses deterministic representative site");
+Check((spec with { SiteId = long.MaxValue }).Name.Length <= 63 && IndexSpec.IsManaged("Results", (spec with { SiteId = long.MaxValue }).Name), "Large site ID remains portable");
+Check(!IndexSpec.IsManaged("Issues", spec.Name), "Ownership requires matching table");
 var existing = new ExistingIndex(spec.Table, spec.Name, spec.Keys);
 Check(Reconciler.Plan([spec], [existing], true).Single().Kind == ChangeKind.Keep, "Repeat is no-op");
 Check(Reconciler.Plan([spec], [existing with { Valid = false }], false).Single().Kind == ChangeKind.Repair, "Invalid index repair");
@@ -84,6 +90,21 @@ Reject(() => Options.Parse(["plan", "--mysql-prefix", "0"]), "Invalid prefix");
 Reject(() => Options.Parse(["plan", "--unknown"]), "Unknown option");
 try { Json.ReadSites("""[{"SiteId":1,"ReferenceType":"Results","RecordCount":1,"SiteSettings":"broken"}]"""); throw new Exception("Invalid settings accepted"); }
 catch (System.Text.Json.JsonException) { passed++; }
+var viewSettings = """{"GridColumns":["ClassA","Title","ResultId"],"Columns":[{"ColumnName":"ClassA","GridLabelText":"分類見出し","LabelText":"分類"},{"ColumnName":"Title","LabelText":"タイトル"}]}""";
+var siteView = new ViewPlanner(Dbms.PostgreSQL).Generate([SiteWith(viewSettings)]).Single();
+Check(siteView.Name == "View_vvplic_Results_1_Untitled", "Site ID and name rule");
+Check(siteView.Columns.Select(c => c.Source).SequenceEqual(["ClassA", "Title", "ResultId"]), "Grid column order");
+Check(siteView.Columns[0].Alias == "分類見出し", "Grid label takes precedence");
+Check(siteView.Select(new(Dbms.PostgreSQL, "Implem.Pleasanter")).Contains("INNER JOIN", StringComparison.Ordinal), "Title sourced from Items");
+Check(!SiteView.IsManaged("View_vvplic_Results_0_invalid") && !SiteView.IsManaged("standard"), "Strict view ownership rule");
+Check((siteView with { SiteName = "顧客 / 一覧" }).Name == "View_vvplic_Results_1_顧客_一覧", "Readable normalized site name");
+Check(System.Text.Encoding.UTF8.GetByteCount((siteView with { SiteName = new string('顧', 100) }).Name) <= 63, "Portable UTF8 identifier length");
+Check(new ViewPlanner(Dbms.MySQL).Generate([SiteWith(viewSettings)]).Single().Name == siteView.Name, "View name independent of DBMS");
+Reject(() => new ViewPlanner(Dbms.SQLServer).Generate([SiteWith("""{"GridColumns":["ClassA~2,Title"]}""")]), "Joined grid cannot be silently omitted");
+Reject(() => new ViewPlanner(Dbms.SQLServer).Generate([SiteWith("{}")]), "Missing defaults fail closed");
+Reject(() => Options.Parse(["_views", "--sites", "sites.json"]), "Offline view apply refused");
+Check(Options.Parse(["_views", "/c"]).Action == "views", "Views check prevents mutation");
+Check(RuntimeLog.FileName(new DateTime(2026, 10, 7, 12, 34, 56)) == "VehicleVision.PleasanterTools.IndexCreator_20261007_123456.log", "CodeDefiner log naming convention");
 Console.WriteLine($"Unit checks passed: {passed}");
 
 if (args.Contains("--integration"))
@@ -104,11 +125,13 @@ if (args.Contains("--integration"))
     var classType = dbms switch { Dbms.SQLServer => "nvarchar(1024)", Dbms.PostgreSQL => "varchar(1024)", _ => "text" };
     foreach (var table in new[] { "Results", "Issues" })
         await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table == "Results" ? "ResultId" : "IssueId")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("Status")} int)".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
-    await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str})");
+    await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str}, {d.Quote("Title")} {str})");
+    await database.Execute($"CREATE TABLE {d.Table("Items")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceId")} bigint NOT NULL, {d.Quote("Title")} {str})");
+    await database.Execute($"INSERT INTO {d.Table("Items")} VALUES (1,1,'Display Title')");
     foreach (var table in new[] { "Results", "Issues" })
     {
         await database.Execute($"INSERT INTO {d.Table(table)} ({d.Quote("SiteId")},{d.Quote(table == "Results" ? "ResultId" : "IssueId")},{d.Quote("UpdatedTime")},{d.Quote("ClassA")},{d.Quote("Status")}) VALUES ({(table == "Results" ? 1 : 2)},1,'2026-01-01','123',100)");
-        await database.Execute($"INSERT INTO {d.Table("Sites")} VALUES ({(table == "Results" ? 1 : 2)},'{table}', '{{\"Columns\":[{{\"ColumnName\":\"ClassA\",\"ChoicesText\":\"A\"}}],\"Views\":[{{\"ColumnFilterHash\":{{\"ClassA\":\"A\"}}}}]}}')");
+        await database.Execute($"INSERT INTO {d.Table("Sites")} VALUES ({(table == "Results" ? 1 : 2)},'{table}', '{{\"Columns\":[{{\"ColumnName\":\"ClassA\",\"ChoicesText\":\"A\"}}],\"Views\":[{{\"ColumnFilterHash\":{{\"ClassA\":\"A\"}}}}]}}', 'Test site')");
         await database.Execute($"CREATE INDEX {d.Quote("standard_" + table)} ON {d.Table(table)} ({d.Quote(table == "Results" ? "ResultId" : "IssueId")})");
     }
     await database.AcquireLock(default);
@@ -145,6 +168,46 @@ if (args.Contains("--integration"))
     foreach (var i in final.Where(i => i.Managed)) await database.Execute(d.Drop(i.Table, i.Name));
     await database.Apply(Reconciler.Plan(updated, await database.ReadIndexes(default), false), default);
     Check(Reconciler.Plan(updated, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Recover after managed indexes disappear");
-    foreach (var table in new[] { "Sites", "Results", "Issues" }) await database.Execute($"DROP TABLE {d.Table(table)}");
+    var liveView = new ViewPlanner(dbms).Generate([SiteWith(viewSettings) with { Title = "顧客一覧" }]).Single();
+    await database.ApplyViews([liveView], false, default);
+    await database.ApplyViews([liveView], false, default);
+    Check((await database.ReadViewNames(default)).Count(n => n == liveView.Name) == 1, "Live view repeat update");
+    await using (System.Data.Common.DbConnection query = dbms switch { Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(cs), Dbms.PostgreSQL => new Npgsql.NpgsqlConnection(cs), _ => new MySqlConnector.MySqlConnection(cs) })
+    {
+        await query.OpenAsync();
+        await using var command = query.CreateCommand();
+        command.CommandText = "SELECT * FROM " + d.Table(liveView.Name);
+        await using var rows = await command.ExecuteReaderAsync();
+        Check(await rows.ReadAsync() && rows.GetName(0) == "分類見出し" && rows.GetString(0) == "123" && rows.GetString(1) == "Display Title" && Convert.ToInt64(rows.GetValue(2)) == 1, "Live view columns and Items title values");
+        Check(!await rows.ReadAsync(), "Site view row isolation");
+    }
+    if (dbms == Dbms.PostgreSQL)
+    {
+        var changedView = liveView with { Columns = [new("ClassA", "New label")] };
+        var blocked = false;
+        try { await database.ApplyViews([changedView], false, default); } catch (UserError) { blocked = true; }
+        Check(blocked, "PostgreSQL column migration preserves existing view");
+        await database.Execute("GRANT SELECT ON " + d.Table(liveView.Name) + " TO PUBLIC");
+        await database.ApplyViews([changedView], false, default, force: true);
+        Check((await database.ReadViewNames(default)).Contains(liveView.Name), "PostgreSQL forced shape update");
+        await using (var grantQuery = new Npgsql.NpgsqlConnection(cs))
+        {
+            await grantQuery.OpenAsync();
+            await using var grantCommand = grantQuery.CreateCommand();
+            grantCommand.CommandText = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE TABLE_SCHEMA=" + SqlDialect.Literal(schema) + " AND TABLE_NAME=" + SqlDialect.Literal(liveView.Name) + " AND grantee='PUBLIC' AND privilege_type='SELECT'";
+            Check(Convert.ToInt64(await grantCommand.ExecuteScalarAsync()) == 1, "PostgreSQL replacement preserves public grant");
+        }
+        await database.Execute("CREATE VIEW " + d.Table("dependent_site_view") + " AS SELECT * FROM " + d.Table(liveView.Name));
+        var dependencyBlocked = false;
+        try { await database.ApplyViews([liveView], false, default, force: true); } catch (System.Data.Common.DbException) { dependencyBlocked = true; }
+        Check(dependencyBlocked && (await database.ReadViewNames(default)).Contains(liveView.Name), "PostgreSQL dependency prevents destructive replacement");
+        await database.Execute("DROP VIEW " + d.Table("dependent_site_view"));
+        await database.ApplyViews([liveView], false, default, force: true);
+    }
+    await database.Execute((dbms == Dbms.SQLServer ? "CREATE VIEW " : "CREATE OR REPLACE VIEW ") + d.Table("standard_site_view") + " AS " + liveView.Select(d));
+    await database.ApplyViews([], true, default);
+    Check((await database.ReadViewNames(default)).Contains("standard_site_view") && !(await database.ReadViewNames(default)).Contains(liveView.Name), "Only managed views pruned");
+    await database.Execute("DROP VIEW " + d.Table("standard_site_view"));
+    foreach (var table in new[] { "Sites", "Items", "Results", "Issues" }) await database.Execute($"DROP TABLE {d.Table(table)}");
     Console.WriteLine($"Integration checks passed ({dbms}). Total checks: {passed}");
 }
