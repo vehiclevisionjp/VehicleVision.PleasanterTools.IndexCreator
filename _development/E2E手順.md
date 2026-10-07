@@ -16,7 +16,7 @@
 4. 作業用の空フォルダで次を実行する。ログイン状態と SiteId は `e2e-state.json` と `e2e-ids.json` としてそのフォルダに書かれる。
    - `node <リポジトリ>/_development/e2e/seed.mjs`: フォルダ・サイト・Wiki、選択肢、保存ビュー、レコードを画面から作る。
 5. 本体に向けた IndexCreator を実行する。MySQL の本体 owner には CREATE VIEW がないため、View は `INDEXCREATOR_CONNECTION_STRING` に管理者の接続を指定する。
-   - `_rds --min-records 0 -y`、`_views --exclude-tree <サブフォルダ> --exclude-site <トップ> -y`、`_choice-lists` に同じ除外指定。
+   - `_rds /min-records 0 /y`、`_views /exclude-tree <サブフォルダ> /exclude-site <トップ> /y`、`_choice-lists` に同じ除外指定。
 6. `node <リポジトリ>/_development/e2e/verify.mjs` で、適用前後の一覧、画面からの登録、選択肢を画面で変更した後のドロップダウンを JSON で得る。選択肢 View の中身を DB に問い合わせ、ドロップダウンと一致することを確認する。
 7. 終了後に本体を止め、退避した Rds.json と Service.json を戻し、`docker compose --profile '*' down -v` で DB を破棄する。
 

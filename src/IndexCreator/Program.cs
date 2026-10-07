@@ -20,27 +20,31 @@ public static class Program
             {
                 RuntimeLog.WriteLine("""
                     IndexCreator 0.1.0 - Pleasanter index management
-                    Usage: IndexCreator <plan|apply|_rds> [/p <Pleasanter folder>] [/y]
-                      views                       Plan per-site SQL views; use --output
+                    Usage: IndexCreator <action> [/p <Pleasanter folder>] [/y]
+                      plan                        Plan indexes (read-only)
+                      _rds                        Create or update indexes
+                      views                       Plan per-site SQL views; use /output
                       _views                      Create or update per-site SQL views
                       choice-lists                Plan fixed choice master views
                       _choice-lists               Create or update choice master views
-                      /p, -p <folder>             Pleasanter application folder (not Parameters)
-                      /c, --check                 Inspect only; never modify the database
-                      /f, --force                 Rebuild indexes or changed PostgreSQL view columns
-                      --sites <sites.json>          Offline plan only; requires --dbms
-                      --dbms <SQLServer|PostgreSQL|MySQL>
-                      --schema <name>              Override the database schema
-                      --min-records <count>        Minimum records per site (default: 10000)
-                      --mysql-prefix <1..191>      TEXT prefix length (default: 100)
-                      --include-filter-columns     Include filter controls
-                      --offline                    Allow blocking index operations (maintenance window)
-                      --lock-timeout <seconds>     Maximum lock wait per DDL before retrying (default: 5)
-                      --exclude-tree <id,...>      Views: skip these sites and every site below them
-                      --exclude-site <id,...>      Views: skip only these sites
-                      --prune                      Remove obsolete IndexCreator indexes
-                      --output <plan.sql>          Export the inspected operation plan
-                      /y, -y, --yes                Apply without an interactive prompt
+                    Options (same style as Implem.CodeDefiner: start with /, a value follows):
+                      /p <folder>                 Pleasanter application folder (not Parameters)
+                      /y                          Apply without an interactive prompt
+                      /c                          Inspect only; never modify the database
+                      /f                          Rebuild indexes or changed PostgreSQL view columns
+                      /sites <sites.json>         Offline plan only; requires /dbms
+                      /dbms <SQLServer|PostgreSQL|MySQL>
+                      /schema <name>              Override the database schema
+                      /min-records <count>        Minimum records per site (default: 10000)
+                      /mysql-prefix <1..191>      TEXT prefix length (default: 100)
+                      /include-filter-columns     Include filter controls
+                      /offline                    Allow blocking index operations (maintenance window)
+                      /lock-timeout <seconds>     Maximum lock wait per DDL before retrying (default: 5)
+                      /exclude-tree <id,...>      Views: skip these sites and every site below them
+                      /exclude-site <id,...>      Views: skip only these sites
+                      /names <label|column>       Views: column names are display names (default) or column names
+                      /prune                      Remove obsolete IndexCreator indexes and views
+                      /output <plan.sql>          Export the inspected operation plan
                     Default layout: IndexCreator beside Implem.CodeDefiner and Implem.Pleasanter.
                     Only IX_vvplic_<Results|Issues|Wikis>_<id>_<purpose>_<16 hex digits> indexes are managed.
                     """);
@@ -54,7 +58,7 @@ public static class Program
                 if (options.Action == "apply") throw new UserError("Apply requires DisableIndexChangeDetection=true in Rds.json.");
             }
             if (config.Dbms == Dbms.SQLServer && !options.Offline)
-                RuntimeLog.WriteLine("INFO: Indexes are created online. Editions without online index operations stop; use --offline only in a maintenance window.");
+                RuntimeLog.WriteLine("INFO: Indexes are created online. Editions without online index operations stop; use /offline only in a maintenance window.");
             IReadOnlyList<Site> sites;
             IReadOnlyList<ExistingIndex> existing = [];
             await using var database = options.SitesFile == null ? new Database(config, options.Offline, options.LockTimeout) : null;
@@ -88,7 +92,7 @@ public static class Program
             if (options.Action == "plan" || pending == 0) return 0;
             if (!options.Yes)
             {
-                if (Console.IsInputRedirected) throw new UserError("Non-interactive apply requires -y.");
+                if (Console.IsInputRedirected) throw new UserError("Non-interactive apply requires /y.");
                 RuntimeLog.Write("Apply the listed changes? Type yes: ");
                 if (Console.ReadLine() != "yes") { RuntimeLog.WriteLine("Cancelled. No changes were applied."); return 2; }
             }
@@ -124,7 +128,7 @@ public static class Program
             RuntimeLog.WriteLine($"Excluded sites: {sites.Count - targets.Count}.");
         }
         var choices = options.Action.Contains("choices", StringComparison.Ordinal);
-        var views = choices ? new ChoicePlanner(options.Path).Generate(targets, sites) : new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path)).Generate(targets);
+        var views = choices ? new ChoicePlanner(options.Path).Generate(targets, sites) : new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path), options.ColumnNames == "column").Generate(targets);
         if (database != null) await database.ValidateColumns(views.SelectMany(v => v.RequiredColumns()).ToArray(), ct);
         var dialect = new SqlDialect(config.Dbms, config.Schema);
         if (choices && database != null && config.Dbms == Dbms.MySQL) dialect.Collation = await database.ReadSchemaCollation(ct);

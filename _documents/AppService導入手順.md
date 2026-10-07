@@ -20,7 +20,7 @@ dotnet /home/site/wwwroot/IndexCreator/IndexCreator.dll plan /p /home/site/wwwro
 dotnet /home/site/wwwroot/IndexCreator/IndexCreator.dll _rds /p /home/site/wwwroot /y
 ```
 
-ZIP 配置や実行パッケージの設定で wwwroot が読み取り専用の場合は、サイトと CodeDefiner を配置する運用に合わせて IndexCreator を配置し、`/p` で本体の絶対パスを指定します。IndexCreator は本体フォルダに状態やログを書き込みません。`--output` の出力先は書き込み可能な場所を指定します。
+ZIP 配置や実行パッケージの設定で wwwroot が読み取り専用の場合は、サイトと CodeDefiner を配置する運用に合わせて IndexCreator を配置し、`/p` で本体の絶対パスを指定します。IndexCreator は本体フォルダに状態やログを書き込みません。`/output` の出力先は書き込み可能な場所を指定します。
 
 ## 環境変数の接続設定
 
@@ -32,6 +32,6 @@ App Service の「接続文字列」欄で指定した値には SQLCONNSTR_ な�
 
 ## サイト変更と本体更新
 
-サイト編集と CodeDefiner を終了し、`plan --prune` で確認した後に `_rds --prune /y` を実行します。複数インスタンスやスロットから同じ DB に実行してもセッションロックで IndexCreator 同士の多重実行を防ぎます。CodeDefiner やサイト編集との同時実行は避けてください。
+サイト編集と CodeDefiner を終了し、`plan /prune` で確認した後に `_rds /prune /y` を実行します。複数インスタンスやスロットから同じ DB に実行してもセッションロックで IndexCreator 同士の多重実行を防ぎます。CodeDefiner やサイト編集との同時実行は避けてください。
 
 本体を再配置する際に IndexCreator フォルダも保持・再配置してください。テーブルが作り直された場合は、IndexCreator の再実行で不足した管理索引を補います。詳しくは [運用手順](運用手順.md) を参照してください。
