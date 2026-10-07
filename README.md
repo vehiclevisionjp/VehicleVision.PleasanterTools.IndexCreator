@@ -1,6 +1,6 @@
 # VehicleVision.PleasanterTools.IndexCreator
 
-Pleasanter のサイト構成から必要なインデックスを計画・作成・更新する .NET 10 コンソールアプリです。SQL Server・PostgreSQL・MySQL に対応し、CodeDefiner と同じように本体の設定を読んで実行します。コンソール出力は Kudu でも読める英語固定です。
+Pleasanter のサイト構成から必要なインデックスを計画・作成・更新する .NET 10 コンソールアプリです。SQL Server・PostgreSQL・MySQL に対応し、CodeDefiner と同じように本体の設定を読んで実行します。コンソール出力は英語固定です。
 
 ## 配置する
 
