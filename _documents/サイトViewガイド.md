@@ -16,6 +16,22 @@ dotnet IndexCreator.dll _views /p "C:\web\pleasanter\Implem.Pleasanter" /y
 
 GridColumns の順序で列を作り、GridLabelText、LabelText、本体の列定義、物理列名の順で列名を決めます。同じ列名には物理列名を付記します。GridColumns が省略されている場合は `/p` の本体にある列定義から既定の一覧列を読みます。Title は Items のタイトルを取得します。TitleBody も SQL View ではタイトルを返します。
 
+## 列名を選ぶ
+
+一覧 View の列名は `/names` で選べます。
+
+| 指定 | 列名 |
+| --- | --- |
+| `/names label` | Pleasanter の表示名。上の規則で決めます。既定です |
+| `/names column` | サイト設定の Columns の `ColumnName`（`ResultId`、`ClassA`、`NumA` など） |
+
+`column` では、表示名の重複を避ける処理は要りません。`TitleBody` は Items のタイトルを返し、列名は `TitleBody` のままです。GridColumns に同じ列が2回あると停止します。選択肢 View の列は Value / Text / TextMini で固定なので、`/names` は一覧 View だけで使えます。
+
+```powershell
+dotnet IndexCreator.dll _views /names column /y
+```
+
+途中で指定を変えると、View の列名が変わります。この View を使うクエリや BI がある場合は、最初に決めて固定してください。PostgreSQL は列名の変更を `CREATE OR REPLACE` ではできないため、`/f` を付けないと停止します。
 値は DB の格納値です。分類の表示ラベル、ユーザーの表示名、リンク先の表示値、添付表示、書式、保存ビューの絞り込み・並べ替えは再現しません。リンク先項目や計算項目の列がある場合は、列を省略せず生成を停止します。取得順序が必要な場合は SELECT に ORDER BY を指定してください。
 
 SQL View は Pleasanter のユーザー・レコード権限判定を実行しません。DB の参照権限を別途設定してください。
@@ -26,26 +42,26 @@ View を作らないサイトは2つの方法で指定できます。どちら�
 
 | 指定 | 除外する範囲 |
 | --- | --- |
-| `--exclude-tree <SiteId,...>` | 指定したサイト（通常はフォルダ）と、その配下の階層すべて |
-| `--exclude-site <SiteId,...>` | 指定したサイトだけ。フォルダを指定しても配下は除外しない |
+| `/exclude-tree <SiteId,...>` | 指定したサイト（通常はフォルダ）と、その配下の階層すべて |
+| `/exclude-site <SiteId,...>` | 指定したサイトだけ。フォルダを指定しても配下は除外しない |
 
 ```powershell
-dotnet IndexCreator.dll views --exclude-tree 10 --exclude-site 205,318
+dotnet IndexCreator.dll views /exclude-tree 10 /exclude-site 205,318
 ```
 
-階層は Sites.ParentId で判定します。`--sites` で計画する場合は、フォルダを含む全サイトの行に ParentId を入れてください。存在しない SiteId を指定すると停止します。除外したサイトの既存の管理 View は、`--prune` を付けた場合に不要として削除されます。計画の一覧で確認してから適用してください。
+階層は Sites.ParentId で判定します。`/sites` で計画する場合は、フォルダを含む全サイトの行に ParentId を入れてください。存在しない SiteId を指定すると停止します。除外したサイトの既存の管理 View は、`/prune` を付けた場合に不要として削除されます。計画の一覧で確認してから適用してください。
 
 ## サイト構成を変更したら
 
-再実行すると表示列と項目名を更新します。サイト名の変更は新しい名前の View を作ります。不要になった管理 View は、計画を確認してから `--prune` で整理します。
+再実行すると表示列と項目名を更新します。サイト名の変更は新しい名前の View を作ります。不要になった管理 View は、計画を確認してから `/prune` で整理します。
 
 ```powershell
-dotnet IndexCreator.dll views --prune
-dotnet IndexCreator.dll _views --prune /y
+dotnet IndexCreator.dll views /prune
+dotnet IndexCreator.dll _views /prune /y
 ```
 
 削除するのは本ツールの命名規則に一致する View だけです。古い名前を参照している SQL や依存 View がある場合は、先に参照を変更してください。新しい名前の View に既存の参照権限は自動継承しません。
 
 PostgreSQL では列名・列順の変更を通常の置換で処理できないため停止します。依存と権限を確認後、`_views /f /y` で再作成できます。テーブル単位の外部 GRANT を復元し、依存 View や列単位の権限がある場合は自動再作成せず停止します。
 
-`--output views.sql` で計画を保存できます。SQL Server の GO は SQL クライアントのバッチ区切りです。PostgreSQL の列構成変更時は、出力された CREATE OR REPLACE だけでは適用できません。インデックスと同様、本体更新・CodeDefiner・サイト編集と同時に適用しないでください。
+`/output views.sql` で計画を保存できます。SQL Server の GO は SQL クライアントのバッチ区切りです。PostgreSQL の列構成変更時は、出力された CREATE OR REPLACE だけでは適用できません。インデックスと同様、本体更新・CodeDefiner・サイト編集と同時に適用しないでください。

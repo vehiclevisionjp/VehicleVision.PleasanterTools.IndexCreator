@@ -1,6 +1,7 @@
 // Wiki を選択肢のリンク先にしたときの動作を確認する。seed.mjs の後に実行する。
 // Wiki の本文を画面で編集し、案件の ClassB の選択肢を自項目の行と [[Wiki の SiteId]] の混在にして、
 // 登録画面のドロップダウンの内容を JSON で出力する（選択肢 View の結果と比べる）。
+// ClassC は JSON 形式のリンク。現行の本体はこの形式で Wiki を指すと選択肢が空になる。
 import fs from 'node:fs';
 import { open, base, setChoices } from './lib.mjs';
 
@@ -18,7 +19,10 @@ await page.click('#UpdateCommand');
 await page.waitForTimeout(2000);
 
 await setChoices(page, ids.table, 'ClassB', '種別', ['own1,自項目', `[[${ids.wiki}]]`, 'own2,後続']);
+// JSON 形式（ChoicesText が [{"SiteId":N}]）で Wiki を指す項目も作る。
+await setChoices(page, ids.table, 'ClassC', '参照', [`[{"SiteId":${ids.wiki}}]`]);
 await page.goto(`${base}/items/${ids.table}/new`);
 await page.waitForTimeout(1500);
-console.log(JSON.stringify({ wikiRecord: href, dropdown: await page.evaluate(() => [...document.querySelector('#Results_ClassB').options].filter(o => o.value !== '').map(o => o.value + '|' + o.text)) }));
+const dropdown = id => page.evaluate(i => [...document.querySelector(i).options].filter(o => o.value !== '').map(o => o.value + '|' + o.text), id);
+console.log(JSON.stringify({ wikiRecord: href, dropdown: await dropdown('#Results_ClassB'), jsonDropdown: await dropdown('#Results_ClassC') }));
 await browser.close();
