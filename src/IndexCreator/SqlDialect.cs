@@ -10,7 +10,14 @@ public sealed class SqlDialect(Dbms dbms, string schema, bool offline = false)
     };
     public string Table(string name) => Quote(schema) + "." + Quote(name);
     public static string Literal(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
-    public string TextLiteral(string value) => (dbms == Dbms.SQLServer ? "N" : "") + Literal(value);
+    // MySQL は既定でバックスラッシュをエスケープ文字として扱い、NO_BACKSLASH_ESCAPES の有無で結果が変わる。
+    // sql_mode に依存しないよう、該当する値は 16 進リテラルで出力する。
+    public string TextLiteral(string value) => dbms switch
+    {
+        Dbms.SQLServer => "N" + Literal(value),
+        Dbms.MySQL when value.Contains('\\') || value.Contains('\0') => "CONVERT(0x" + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(value)) + " USING utf8mb4)",
+        _ => Literal(value)
+    };
     public string Create(IndexSpec spec)
     {
         var keys = string.Join(", ", spec.Keys.Select(k => Quote(k.Column) + (k.Prefix > 0 ? $"({k.Prefix})" : "") + (k.Pattern ? " varchar_pattern_ops" : "") + (k.Desc ? " DESC" : " ASC")));
