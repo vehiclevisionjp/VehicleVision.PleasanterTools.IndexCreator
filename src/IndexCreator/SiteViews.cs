@@ -33,11 +33,7 @@ public sealed record SiteView(long SiteId, string Table, IReadOnlyList<ViewColum
     public static bool IsManaged(string name, bool choices = false) => Regex.IsMatch(name, "^" + Prefix + (choices ? "ChoiceList_" : "") + @"(Results|Issues|Wikis)_[1-9][0-9]{0,18}_[\p{L}\p{N}_-]+$", RegexOptions.CultureInvariant) && Encoding.UTF8.GetByteCount(name) <= 63;
     public string Select(SqlDialect d)
     {
-        if (Choices != null)
-        {
-            string Row(ChoiceRow c) => $"SELECT {d.TextLiteral(c.Value)} AS {d.Quote("Value")}, {d.TextLiteral(c.Text)} AS {d.Quote("Text")}, {d.TextLiteral(c.TextMini)} AS {d.Quote("TextMini")}";
-            return Choices.Count == 0 ? Row(new("", "", "")) + " WHERE 1=0" : string.Join(" UNION ALL ", Choices.Select(Row));
-        }
+        if (Choices != null) return d.ChoiceSelect(SiteId, ChoiceColumn!);
         var expressions = Columns.Select(c => (c.Source == "Title" ? "i." : "r.") + d.Quote(c.Source) + " AS " + d.Quote(c.Alias));
         var id = Table[..^1] + "Id";
         var join = Columns.Any(c => c.Source == "Title") ? $" INNER JOIN {d.Table("Items")} i ON i.{d.Quote("ReferenceId")}=r.{d.Quote(id)} AND i.{d.Quote("SiteId")}=r.{d.Quote("SiteId")}" : "";
@@ -128,6 +124,9 @@ public sealed partial class Database
         }
         await VerifySnapshot();
         await ValidateColumns(views.SelectMany(v => v.RequiredColumns()).ToArray(), ct);
+        if (choices && config.Dbms == Dbms.SQLServer) await RequireChoiceFunctions(ct);
+        if (choices && config.Dbms == Dbms.MySQL) dialect.Collation = await ReadSchemaCollation(ct);
+        await SetLockTimeout(true, ct);
         var existing = await ReadViewNames(ct);
         var rebuild = new HashSet<string>(StringComparer.Ordinal);
         // PostgreSQL の列名・列順の変更は CREATE OR REPLACE だけではできない。
@@ -150,17 +149,29 @@ public sealed partial class Database
         }
         foreach (var view in views)
         {
-            if (rebuild.Contains(view.Name)) await ReplacePostgresView(view, ct);
-            else await Execute(ViewSql(view), ct);
+            if (rebuild.Contains(view.Name)) await Retry(() => ReplacePostgresView(view, ct), ct);
+            else await Retry(() => Execute(ViewSql(view), ct), ct);
             RuntimeLog.WriteLine("Updated view " + view.ConsoleName);
         }
         await VerifySnapshot();
         if (prune)
             foreach (var name in existing.Where(n => SiteView.IsManaged(n, choices) && !views.Any(v => v.Name == n)))
             {
-                await Execute("DROP VIEW " + dialect.Table(name) + ";", ct);
+                await Retry(() => Execute("DROP VIEW " + dialect.Table(name) + ";", ct), ct);
                 RuntimeLog.WriteLine("Dropped view " + SiteView.ConsoleIdentifier(name));
             }
+    }
+    public async Task<string?> ReadSchemaCollation(CancellationToken ct)
+    {
+        await using var cmd = Command("SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=@schema");
+        return await cmd.ExecuteScalarAsync(ct) as string;
+    }
+    // STRING_SPLIT の ordinal と TRIM の除去文字指定は SQL Server 2022 以降と Azure SQL で使える。
+    // STRING_SPLIT と OPENJSON は互換性レベル 130 以上を要する。
+    private async Task RequireChoiceFunctions(CancellationToken ct)
+    {
+        await using var cmd = Command("SELECT CASE WHEN (CAST(SERVERPROPERTY('EngineEdition') AS int) IN (5, 8) OR CAST(SERVERPROPERTY('ProductMajorVersion') AS int) >= 16) AND (SELECT compatibility_level FROM sys.databases WHERE database_id = DB_ID()) >= 130 THEN 1 ELSE 0 END");
+        if (Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)) != 1) throw new UserError("Choice views on SQL Server require SQL Server 2022 or later, or Azure SQL, with compatibility level 130 or higher. No choice views were applied.");
     }
     private async Task ReplacePostgresView(SiteView view, CancellationToken ct)
     {

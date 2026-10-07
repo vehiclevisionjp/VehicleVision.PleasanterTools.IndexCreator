@@ -20,6 +20,21 @@ GridColumns の順序で列を作り、GridLabelText、LabelText、本体の列�
 
 SQL View は Pleasanter のユーザー・レコード権限判定を実行しません。DB の参照権限を別途設定してください。
 
+## 対象から除外する
+
+View を作らないサイトは2つの方法で指定できます。どちらもカンマ区切りで複数の SiteId を指定でき、併用もできます。選択肢 View（`choice-lists`）でも同じ指定を使えます。
+
+| 指定 | 除外する範囲 |
+| --- | --- |
+| `--exclude-tree <SiteId,...>` | 指定したサイト（通常はフォルダ）と、その配下の階層すべて |
+| `--exclude-site <SiteId,...>` | 指定したサイトだけ。フォルダを指定しても配下は除外しない |
+
+```powershell
+dotnet IndexCreator.dll views --exclude-tree 10 --exclude-site 205,318
+```
+
+階層は Sites.ParentId で判定します。`--sites` で計画する場合は、フォルダを含む全サイトの行に ParentId を入れてください。存在しない SiteId を指定すると停止します。除外したサイトの既存の管理 View は、`--prune` を付けた場合に不要として削除されます。計画の一覧で確認してから適用してください。
+
 ## サイト構成を変更したら
 
 再実行すると表示列と項目名を更新します。サイト名の変更は新しい名前の View を作ります。不要になった管理 View は、計画を確認してから `--prune` で整理します。

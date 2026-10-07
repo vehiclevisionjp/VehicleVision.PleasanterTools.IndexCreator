@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace VehicleVision.PleasanterTools.IndexCreator;
 
-public sealed record Options(string Action, string? Path, string? SitesFile, string? DbmsName, string? Schema, long MinRecords, int MysqlPrefix, bool IncludeFilters, bool Offline, bool Prune, bool Yes, string? Output, bool Force = false)
+public sealed record Options(string Action, string? Path, string? SitesFile, string? DbmsName, string? Schema, long MinRecords, int MysqlPrefix, bool IncludeFilters, bool Offline, bool Prune, bool Yes, string? Output, bool Force = false, int LockTimeout = 5, SiteExclusion? Exclusion = null)
 {
     public static Options Parse(string[] args)
     {
@@ -17,7 +17,7 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
             var name = args[i] switch { "/p" => "-p", "/y" => "--yes", "-y" => "--yes", "/c" => "--check", "/f" => "--force", _ => args[i] };
             if (name is "--yes" or "--prune" or "--offline" or "--include-filter-columns" or "--check" or "--force")
             { if (!flags.Add(name)) throw new UserError("Duplicate option."); continue; }
-            if (name is not ("-p" or "--sites" or "--dbms" or "--schema" or "--min-records" or "--mysql-prefix" or "--output")) throw new UserError("Unknown option. Use --help for usage.");
+            if (name is not ("-p" or "--sites" or "--dbms" or "--schema" or "--min-records" or "--mysql-prefix" or "--output" or "--lock-timeout" or "--exclude-tree" or "--exclude-site")) throw new UserError("Unknown option. Use --help for usage.");
             // CodeDefiner の /p と同じく、パスは / で始まる値も消費する。
             if (++i >= args.Length || (name != "-p" && args[i].StartsWith('-')) || !values.TryAdd(name, args[i])) throw new UserError("Missing or duplicate option value.");
         }
@@ -30,10 +30,22 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
         }
         var prefix = (int)Number("--mysql-prefix", 100, 191);
         if (prefix < 1) throw new UserError("MySQL prefix must be between 1 and 191.");
+        // 稼働中の DB を止めないため、ロック待ちには必ず上限を持たせる。
+        var lockTimeout = (int)Number("--lock-timeout", 5, 3600);
+        if (lockTimeout < 1) throw new UserError("Lock timeout must be between 1 and 3600 seconds.");
         if (flags.Contains("--check")) action = action.Contains("choices", StringComparison.Ordinal) ? "views-choices" : action.StartsWith("views", StringComparison.Ordinal) ? "views" : "plan";
         if (action is "apply" or "views-apply" or "views-choices-apply" && V("--sites") != null) throw new UserError("Apply requires a live database; --sites is only available for planning.");
         if (V("--sites") != null && flags.Contains("--prune")) throw new UserError("Prune requires a live database inventory.");
-        return new(action, V("-p"), V("--sites"), V("--dbms"), V("--schema"), Number("--min-records", 10000, long.MaxValue), prefix, flags.Contains("--include-filter-columns"), flags.Contains("--offline"), flags.Contains("--prune"), flags.Contains("--yes"), V("--output"), flags.Contains("--force"));
+        IReadOnlySet<long> Ids(string key)
+        {
+            var ids = new HashSet<long>();
+            foreach (var part in (V(key) ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                if (!long.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0 || !ids.Add(id)) throw new UserError("Excluded SiteIds must be distinct positive numbers separated by commas.");
+            return ids;
+        }
+        var exclusion = new SiteExclusion(Ids("--exclude-tree"), Ids("--exclude-site"));
+        if (!exclusion.IsEmpty && !action.StartsWith("views", StringComparison.Ordinal)) throw new UserError("Site exclusions apply only to views and choice-lists.");
+        return new(action, V("-p"), V("--sites"), V("--dbms"), V("--schema"), Number("--min-records", 10000, long.MaxValue), prefix, flags.Contains("--include-filter-columns"), flags.Contains("--offline"), flags.Contains("--prune"), flags.Contains("--yes"), V("--output"), flags.Contains("--force"), lockTimeout, exclusion);
     }
 }
 public sealed record Configuration(Dbms Dbms, string Schema, string ConnectionString, bool DisableIndexChangeDetection, int Timeout)

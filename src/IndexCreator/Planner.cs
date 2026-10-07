@@ -55,6 +55,12 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
                 if (search == "") search = Choices(c) ? "ExactMatch" : "PartialMatch";
                 if (search is "2" or "12" or "ExactMatch" or "ExactMatchMultiple") return "eq";
                 if (search is "3" or "13" or "ForwardMatch" or "ForwardMatchMultiple") return "prefix";
+                // 画面で選択肢を設定すると検索方法が部分一致で保存される場合がある。本体は LIKE '%値%' で検索する。
+                if (Choices(c))
+                {
+                    Note(s, $"The {name} filter uses partial match, so no index can serve it. Set the search type to exact match in the site's filter settings if the choices are compared as whole values.");
+                    return "skip";
+                }
                 break;
         }
         Note(s, "A filter cannot use a plain B-tree key (joined, text, partial-match or unknown column).");

@@ -14,6 +14,8 @@ public sealed class ChoicePlanner
         split = general.Get("ChoiceSplitRegexPattern").Text() is { Length: > 0 } s ? s : @"(?<!\\),";
         replace = general.Get("ChoiceReplaceRegexPattern").Text() is { Length: > 0 } r ? r : @"\\(,)";
         replacement = general.Get("ChoiceReplaceRegexReplacement").ValueKind == System.Text.Json.JsonValueKind.String ? general.Get("ChoiceReplaceRegexReplacement").Text() : "$1";
+        // 選択肢 View は DB の組込関数で既定の区切り規則を再現する。独自の規則は DB 側で同じ結果にできないため止める。
+        if (split != @"(?<!\\)," || replace != @"\\(,)" || replacement != "$1") throw new UserError("Choice views support only the default ChoiceSplitRegexPattern and ChoiceReplaceRegex settings. No choice views were applied.");
     }
     public IReadOnlyList<SiteView> Generate(IReadOnlyList<Site> sites)
     {
@@ -29,7 +31,7 @@ public sealed class ChoicePlanner
                 if (!Regex.IsMatch(name, "^[A-Za-z][A-Za-z0-9]*$", RegexOptions.CultureInvariant)) throw new UserError("Invalid choice column name.");
                 var rows = new List<ChoiceRow>();
                 var seen = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var line in text.Replace("\r", "", StringComparison.Ordinal).Split('\n').Select(l => l.Trim()).Where(l => l != ""))
+                foreach (var line in text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Select(l => l.Trim()).Where(l => l != ""))
                 {
                     if (line.StartsWith("[[", StringComparison.Ordinal)) throw new UserError("Dynamic choice sources cannot be exported as fixed choice lists. No choice views were applied.");
                     var timeout = TimeSpan.FromSeconds(1);
@@ -37,8 +39,8 @@ public sealed class ChoicePlanner
                     var value = values[0];
                     var label = values.Length > 1 && values[1] != "" ? values[1] : value;
                     var mini = values.Length > 2 && values[2] != "" ? values[2] : label;
-                    // Pleasanter 本体は同じ値の先頭行だけを採用する。
-                    if (seen.Add(value)) rows.Add(new(value, label, mini));
+                    // 本体と同じく、行をカンマで単純に区切った先頭要素が重なる場合は最初の行だけを採用する。
+                    if (seen.Add(line.Split(',')[0])) rows.Add(new(value, label, mini));
                 }
                 views.Add(new(site.SiteId, site.ReferenceType, [new("Value", "Value"), new("Text", "Text"), new("TextMini", "TextMini")], site.Title, rows, name));
             }

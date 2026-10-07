@@ -10,9 +10,13 @@ public sealed partial class Database : IAsyncDisposable
     private readonly Configuration config;
     private readonly SqlDialect dialect;
     private readonly DbConnection connection;
-    public Database(Configuration configuration, bool offline = false)
+    private readonly bool offline;
+    private readonly int lockTimeout;
+    public Database(Configuration configuration, bool offline = false, int lockTimeout = 5)
     {
         config = configuration;
+        this.offline = offline;
+        this.lockTimeout = lockTimeout;
         dialect = new(config.Dbms, config.Schema, offline);
         connection = config.Dbms switch
         {
@@ -72,6 +76,15 @@ public sealed partial class Database : IAsyncDisposable
             sites.Add(new(Convert.ToInt64(reader.GetValue(0)), reader.GetString(1), settings, Convert.ToInt64(reader.GetValue(3)), reader.IsDBNull(4) ? "" : reader.GetString(4)));
         }
         return sites;
+    }
+    public async Task<IReadOnlyDictionary<long, long>> ReadSiteParents(CancellationToken ct)
+    {
+        await using var cmd = Command($"SELECT {dialect.Quote("SiteId")}, {dialect.Quote("ParentId")} FROM {dialect.Table("Sites")}");
+        cmd.Parameters.Clear();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        var parents = new Dictionary<long, long>();
+        while (await reader.ReadAsync(ct)) parents[Convert.ToInt64(reader.GetValue(0))] = reader.IsDBNull(1) ? 0 : Convert.ToInt64(reader.GetValue(1));
+        return parents;
     }
     public async Task<IReadOnlyList<ExistingIndex>> ReadIndexes(CancellationToken ct)
     {
@@ -141,11 +154,14 @@ public sealed partial class Database : IAsyncDisposable
                 throw new UserError("Site configuration changed during apply. No further changes were applied; re-run plan.");
         }
         await CheckSiteSnapshot();
+        // PostgreSQL の CONCURRENTLY は業務の読み書きを妨げない弱いロックだけを使う。
+        // 待機を打ち切ると INVALID な索引が残るため、この場合だけ上限を設けない。
+        await SetLockTimeout(config.Dbms != Dbms.PostgreSQL || offline, ct);
         // 並行する CodeDefiner やサイト設定変更は別運用で止める。索引作成後にのみ古い索引を削除する。
         foreach (var c in changes.Where(c => c.Kind is ChangeKind.Create or ChangeKind.Repair))
         {
-            if (c.Kind == ChangeKind.Repair) await Execute(dialect.Drop(c.Spec.Table, c.Name), ct);
-            await Execute(dialect.Create(c.Spec), ct);
+            if (c.Kind == ChangeKind.Repair) await Retry(() => Execute(dialect.Drop(c.Spec.Table, c.Name), ct), ct);
+            await Retry(() => Execute(dialect.Create(c.Spec, lockTimeout), ct), ct);
             RuntimeLog.WriteLine("Created " + c.Name);
         }
         var refreshed = await ReadIndexes(ct);
@@ -156,10 +172,37 @@ public sealed partial class Database : IAsyncDisposable
         foreach (var c in changes.Where(c => c.Kind == ChangeKind.Drop))
         {
             if (!IndexSpec.IsManaged(c.Spec.Table, c.Name)) throw new UserError("Refusing to remove an unmanaged index.");
-            await Execute(dialect.Drop(c.Spec.Table, c.Name), ct);
+            await Retry(() => Execute(dialect.Drop(c.Spec.Table, c.Name), ct), ct);
             RuntimeLog.WriteLine("Dropped " + c.Name);
         }
     }
+    public async Task SetLockTimeout(bool enabled, CancellationToken ct)
+    {
+        if (enabled) await Execute(dialect.LockTimeout(lockTimeout), ct);
+        else if (config.Dbms == Dbms.PostgreSQL) await Execute("SET lock_timeout = 0;", ct);
+    }
+    // ロック待ちの上限に達した DDL は何も変更せずに中止されるため、間隔を空けて再試行する。
+    public async Task Retry(Func<Task> action, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try { await action(); return; }
+            catch (DbException e) when (IsLockTimeout(e) && attempt < 3)
+            {
+                RuntimeLog.WriteLine($"Lock wait limit reached. Retrying ({attempt}/2).");
+                await Task.Delay(TimeSpan.FromSeconds(lockTimeout * attempt), ct);
+            }
+            catch (DbException e) when (IsLockTimeout(e)) { throw new UserError("Could not obtain a database lock within the wait limit. Completed steps remain applied; re-run when the workload is lighter."); }
+            catch (SqlException e) when (e.Number == 1712) { throw new UserError("This SQL Server edition cannot create indexes online. Re-run with --offline during a maintenance window."); }
+        }
+    }
+    private static bool IsLockTimeout(DbException e) => e switch
+    {
+        SqlException s => s.Number == 1222,
+        PostgresException p => p.SqlState == PostgresErrorCodes.LockNotAvailable,
+        MySqlException m => m.ErrorCode == MySqlErrorCode.LockWaitTimeout,
+        _ => false
+    };
     public async Task Execute(string sql, CancellationToken ct = default)
     {
         await using var cmd = Command(sql);

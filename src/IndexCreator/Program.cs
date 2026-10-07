@@ -34,7 +34,10 @@ public static class Program
                       --min-records <count>        Minimum records per site (default: 10000)
                       --mysql-prefix <1..191>      TEXT prefix length (default: 100)
                       --include-filter-columns     Include filter controls
-                      --offline                    Use blocking index operations
+                      --offline                    Allow blocking index operations (maintenance window)
+                      --lock-timeout <seconds>     Maximum lock wait per DDL before retrying (default: 5)
+                      --exclude-tree <id,...>      Views: skip these sites and every site below them
+                      --exclude-site <id,...>      Views: skip only these sites
                       --prune                      Remove obsolete IndexCreator indexes
                       --output <plan.sql>          Export the inspected operation plan
                       /y, -y, --yes                Apply without an interactive prompt
@@ -51,10 +54,10 @@ public static class Program
                 if (options.Action == "apply") throw new UserError("Apply requires DisableIndexChangeDetection=true in Rds.json.");
             }
             if (config.Dbms == Dbms.SQLServer && !options.Offline)
-                RuntimeLog.WriteLine("INFO: Online creation is used on supported editions; other editions build offline.");
+                RuntimeLog.WriteLine("INFO: Indexes are created online. Editions without online index operations stop; use --offline only in a maintenance window.");
             IReadOnlyList<Site> sites;
             IReadOnlyList<ExistingIndex> existing = [];
-            await using var database = options.SitesFile == null ? new Database(config, options.Offline) : null;
+            await using var database = options.SitesFile == null ? new Database(config, options.Offline, options.LockTimeout) : null;
             if (database != null)
             {
                 await database.Open(cancel.Token);
@@ -77,7 +80,7 @@ public static class Program
                 foreach (var c in changes.Where(c => c.Kind != ChangeKind.Keep))
                 {
                     if (c.Kind is ChangeKind.Drop or ChangeKind.Repair) statements.Add(dialect.Drop(c.Spec.Table, c.Name));
-                    if (c.Kind is ChangeKind.Create or ChangeKind.Repair) statements.Add(dialect.Create(c.Spec));
+                    if (c.Kind is ChangeKind.Create or ChangeKind.Repair) statements.Add(dialect.Create(c.Spec, options.LockTimeout));
                 }
                 await File.WriteAllTextAsync(options.Output, string.Join(Environment.NewLine, statements), cancel.Token);
                 RuntimeLog.WriteLine("SQL plan exported.");
@@ -102,7 +105,7 @@ public static class Program
     }
     private static async Task<int> RunViews(Options options, Configuration config, CancellationToken ct)
     {
-        await using var database = options.SitesFile == null ? new Database(config, options.Offline) : null;
+        await using var database = options.SitesFile == null ? new Database(config, options.Offline, options.LockTimeout) : null;
         IReadOnlyList<Site> sites;
         IReadOnlyList<string> existing = [];
         if (database != null)
@@ -113,14 +116,23 @@ public static class Program
             existing = await database.ReadViewNames(ct);
         }
         else sites = Json.ReadSites(await File.ReadAllTextAsync(options.SitesFile!, ct));
+        var targets = sites;
+        if (options.Exclusion is { IsEmpty: false } exclusion)
+        {
+            var parents = database != null ? await database.ReadSiteParents(ct) : Json.ReadSiteParents(await File.ReadAllTextAsync(options.SitesFile!, ct));
+            targets = exclusion.Apply(sites, parents);
+            RuntimeLog.WriteLine($"Excluded sites: {sites.Count - targets.Count}.");
+        }
         var choices = options.Action.Contains("choices", StringComparison.Ordinal);
-        var views = choices ? new ChoicePlanner(options.Path).Generate(sites) : new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path)).Generate(sites);
+        var views = choices ? new ChoicePlanner(options.Path).Generate(targets) : new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path)).Generate(targets);
         if (database != null) await database.ValidateColumns(views.SelectMany(v => v.RequiredColumns()).ToArray(), ct);
         var dialect = new SqlDialect(config.Dbms, config.Schema);
+        if (choices && database != null && config.Dbms == Dbms.MySQL) dialect.Collation = await database.ReadSchemaCollation(ct);
         var drops = options.Prune ? existing.Where(n => SiteView.IsManaged(n, choices)).Where(n => !views.Any(v => v.Name == n)).ToArray() : [];
         foreach (var view in views) RuntimeLog.WriteLine($"{(existing.Contains(view.Name) ? "Update" : "Create"),-7} VIEW {view.ConsoleName} Columns: {view.Columns.Count}");
         foreach (var name in drops) RuntimeLog.WriteLine("Drop    VIEW " + SiteView.ConsoleIdentifier(name));
         RuntimeLog.WriteLine("INFO: SQL views expose database values. UI permissions, formatting, saved-view filters and row ordering are not reproduced.");
+        if (choices) RuntimeLog.WriteLine("INFO: Choice views read SiteSettings at query time. Choice edits need no re-run; new columns and site renames do.");
         if (options.Output != null)
         {
             var prefix = config.Dbms == Dbms.SQLServer ? "CREATE OR ALTER VIEW " : "CREATE OR REPLACE VIEW ";
