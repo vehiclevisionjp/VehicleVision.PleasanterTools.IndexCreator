@@ -3,23 +3,28 @@ using System.Text.Json;
 
 namespace VehicleVision.PleasanterTools.IndexCreator;
 
-public sealed record Options(string Action, string? Path, string? SitesFile, string? DbmsName, string? Schema, long MinRecords, int MysqlPrefix, bool IncludeFilters, bool Offline, bool Prune, bool Yes, string? Output, bool Force = false, int LockTimeout = 5, SiteExclusion? Exclusion = null)
+public sealed record Options(string Action, string? Path, string? SitesFile, string? DbmsName, string? Schema, long MinRecords, int MysqlPrefix, bool IncludeFilters, bool Offline, bool Prune, bool Yes, string? Output, bool Force = false, int LockTimeout = 5, SiteExclusion? Exclusion = null, string ColumnNames = "label")
 {
+    // CodeDefiner の引数と同じ書式。最初の引数が操作で、オプションは / で始まる。
+    // 値のあるオプションは次の引数を値にする。パスを取るもの（p / sites / output）は / で始まる値も消費する（Linux の絶対パス）。
+    private static readonly string[] FlagOptions = ["y", "f", "c", "prune", "offline", "include-filter-columns"];
+    private static readonly string[] PathOptions = ["p", "sites", "output"];
+    private static readonly string[] ValueOptions = [.. PathOptions, "dbms", "schema", "min-records", "mysql-prefix", "lock-timeout", "exclude-tree", "exclude-site", "names"];
     public static Options Parse(string[] args)
     {
-        if (args.Length == 0 || args[0] is "--help" or "-h" or "help") return new("help", null, null, null, null, 10000, 100, false, false, false, false, null);
-        var action = args[0] switch { "_rds" => "apply", "_views" => "views-apply", "choice-lists" => "views-choices", "_choice-lists" or "choice-lists-apply" => "views-choices-apply", _ => args[0] };
-        if (action is not ("plan" or "apply" or "views" or "views-apply" or "views-choices" or "views-choices-apply")) throw new UserError("Unknown action. Use plan, apply, views, _views, choice-lists or _choice-lists.");
+        if (args.Length == 0 || args[0] is "help" or "/?") return new("help", null, null, null, null, 10000, 100, false, false, false, false, null);
+        var action = args[0] switch { "_rds" => "apply", "_views" => "views-apply", "choice-lists" => "views-choices", "_choice-lists" => "views-choices-apply", _ => args[0] };
+        if (action is not ("plan" or "apply" or "views" or "views-apply" or "views-choices" or "views-choices-apply")) throw new UserError("Unknown action. Use plan, _rds, views, _views, choice-lists or _choice-lists.");
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         var flags = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 1; i < args.Length; i++)
         {
-            var name = args[i] switch { "/p" => "-p", "/y" => "--yes", "-y" => "--yes", "/c" => "--check", "/f" => "--force", _ => args[i] };
-            if (name is "--yes" or "--prune" or "--offline" or "--include-filter-columns" or "--check" or "--force")
+            if (args[i].Length < 2 || args[i][0] != '/') throw new UserError("Options start with /. Use help for usage.");
+            var name = args[i][1..];
+            if (FlagOptions.Contains(name))
             { if (!flags.Add(name)) throw new UserError("Duplicate option."); continue; }
-            if (name is not ("-p" or "--sites" or "--dbms" or "--schema" or "--min-records" or "--mysql-prefix" or "--output" or "--lock-timeout" or "--exclude-tree" or "--exclude-site")) throw new UserError("Unknown option. Use --help for usage.");
-            // CodeDefiner の /p と同じく、パスは / で始まる値も消費する。
-            if (++i >= args.Length || (name != "-p" && args[i].StartsWith('-')) || !values.TryAdd(name, args[i])) throw new UserError("Missing or duplicate option value.");
+            if (!ValueOptions.Contains(name)) throw new UserError("Unknown option. Use help for usage.");
+            if (++i >= args.Length || (!PathOptions.Contains(name) && args[i].StartsWith('/')) || !values.TryAdd(name, args[i])) throw new UserError("Missing or duplicate option value.");
         }
         string? V(string key) => values.GetValueOrDefault(key);
         long Number(string key, long fallback, long max)
@@ -28,14 +33,14 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
             if (!long.TryParse(V(key), NumberStyles.None, CultureInfo.InvariantCulture, out var n) || n < 0 || n > max) throw new UserError("Numeric option out of range.");
             return n;
         }
-        var prefix = (int)Number("--mysql-prefix", 100, 191);
+        var prefix = (int)Number("mysql-prefix", 100, 191);
         if (prefix < 1) throw new UserError("MySQL prefix must be between 1 and 191.");
         // 稼働中の DB を止めないため、ロック待ちには必ず上限を持たせる。
-        var lockTimeout = (int)Number("--lock-timeout", 5, 3600);
+        var lockTimeout = (int)Number("lock-timeout", 5, 3600);
         if (lockTimeout < 1) throw new UserError("Lock timeout must be between 1 and 3600 seconds.");
-        if (flags.Contains("--check")) action = action.Contains("choices", StringComparison.Ordinal) ? "views-choices" : action.StartsWith("views", StringComparison.Ordinal) ? "views" : "plan";
-        if (action is "apply" or "views-apply" or "views-choices-apply" && V("--sites") != null) throw new UserError("Apply requires a live database; --sites is only available for planning.");
-        if (V("--sites") != null && flags.Contains("--prune")) throw new UserError("Prune requires a live database inventory.");
+        if (flags.Contains("c")) action = action.Contains("choices", StringComparison.Ordinal) ? "views-choices" : action.StartsWith("views", StringComparison.Ordinal) ? "views" : "plan";
+        if (action is "apply" or "views-apply" or "views-choices-apply" && V("sites") != null) throw new UserError("Apply requires a live database; /sites is only available for planning.");
+        if (V("sites") != null && flags.Contains("prune")) throw new UserError("Prune requires a live database inventory.");
         IReadOnlySet<long> Ids(string key)
         {
             var ids = new HashSet<long>();
@@ -43,9 +48,13 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
                 if (!long.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0 || !ids.Add(id)) throw new UserError("Excluded SiteIds must be distinct positive numbers separated by commas.");
             return ids;
         }
-        var exclusion = new SiteExclusion(Ids("--exclude-tree"), Ids("--exclude-site"));
+        var exclusion = new SiteExclusion(Ids("exclude-tree"), Ids("exclude-site"));
         if (!exclusion.IsEmpty && !action.StartsWith("views", StringComparison.Ordinal)) throw new UserError("Site exclusions apply only to views and choice-lists.");
-        return new(action, V("-p"), V("--sites"), V("--dbms"), V("--schema"), Number("--min-records", 10000, long.MaxValue), prefix, flags.Contains("--include-filter-columns"), flags.Contains("--offline"), flags.Contains("--prune"), flags.Contains("--yes"), V("--output"), flags.Contains("--force"), lockTimeout, exclusion);
+        // label は Pleasanter の表示名（LabelText）、column は列名（ColumnName）。選択肢 View の列は固定なので対象外。
+        var names = V("names") ?? "label";
+        if (names is not ("label" or "column")) throw new UserError("/names must be label or column.");
+        if (V("names") != null && action is not ("views" or "views-apply")) throw new UserError("/names applies only to views.");
+        return new(action, V("p"), V("sites"), V("dbms"), V("schema"), Number("min-records", 10000, long.MaxValue), prefix, flags.Contains("include-filter-columns"), flags.Contains("offline"), flags.Contains("prune"), flags.Contains("y"), V("output"), flags.Contains("f"), lockTimeout, exclusion, names);
     }
 }
 public sealed record Configuration(Dbms Dbms, string Schema, string ConnectionString, bool DisableIndexChangeDetection, int Timeout)
@@ -82,7 +91,7 @@ public sealed record Configuration(Dbms Dbms, string Schema, string ConnectionSt
         var serviceName = service.Get("Name").Text();
         if (serviceName == "") serviceName = "Implem.Pleasanter";
         var dbmsName = new[] { options.DbmsName, Environment.GetEnvironmentVariable("INDEXCREATOR_DBMS"), rds.Get("Dbms").Text() }.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-        if (!Enum.TryParse<Dbms>(dbmsName, false, out var dbms) || !Enum.IsDefined(dbms)) throw new UserError("Dbms must be SQLServer, PostgreSQL or MySQL. Use -p to locate Pleasanter or --dbms for offline planning.");
+        if (!Enum.TryParse<Dbms>(dbmsName, false, out var dbms) || !Enum.IsDefined(dbms)) throw new UserError("Dbms must be SQLServer, PostgreSQL or MySQL. Use /p to locate Pleasanter or /dbms for offline planning.");
         var envName = service.Get("EnvironmentName").Text();
         var connection = new[] {
             Environment.GetEnvironmentVariable("INDEXCREATOR_CONNECTION_STRING"),

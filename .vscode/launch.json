@@ -7,7 +7,7 @@
       "request": "launch",
       "preLaunchTask": "build",
       "program": "${workspaceFolder}/src/IndexCreator/bin/Release/net10.0/IndexCreator.dll",
-      "args": ["plan", "--sites", "${workspaceFolder}/examples/sites.json", "--dbms", "SQLServer"],
+      "args": ["plan", "/sites", "${workspaceFolder}/examples/sites.json", "/dbms", "SQLServer"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
     }

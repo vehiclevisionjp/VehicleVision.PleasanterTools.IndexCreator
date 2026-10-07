@@ -7,7 +7,7 @@ dotnet IndexCreator.dll choice-lists
 dotnet IndexCreator.dll _choice-lists /y
 ```
 
-`choice-lists` は計画、`_choice-lists` / `choice-lists-apply` は作成・更新です。`/p`、`/c`、`/y`、`--output` は一覧 View と共通です。
+`choice-lists` は計画、`_choice-lists` は作成・更新です。`/p`、`/c`、`/y`、`/output` は一覧 View と共通です。
 
 名前は `View_vvplic_ChoiceList_{ReferenceType}_{SiteId}_{ColumnName}_{SiteName}`。例えば `View_vvplic_ChoiceList_Results_100_ClassA_案件一覧` です。UTF-8 の最大63バイトに収めるためサイト名部分を短縮します。
 
@@ -23,9 +23,9 @@ View はサイト設定を参照のたびに DB の組込関数で読み取り�
 
 この機能は設定に列挙された固定選択肢と、Wiki をリンク先にした選択肢を対象にします。ユーザー・組織・グループなどの動的な選択肢（`[[Users]]` など）と、表（Results / Issues）をリンク先にした選択肢（JSON 形式を含む）は、生成を停止します。View の作成後に追加された動的な選択肢の行は、View の結果に含めません。区切り・置換は本体の既定の規則に従います。General.json の ChoiceSplitRegexPattern / ChoiceReplaceRegexPattern / ChoiceReplaceRegexReplacement を変更している場合は生成を停止します。
 
-特定のフォルダ配下やサイトを対象外にするには、一覧 View と同じ `--exclude-tree` / `--exclude-site` を使います。詳しくは [サイト View ガイド](サイトViewガイド.md#対象から除外する) を参照してください。
+特定のフォルダ配下やサイトを対象外にするには、一覧 View と同じ `/exclude-tree` / `/exclude-site` を使います。詳しくは [サイト View ガイド](サイトViewガイド.md#対象から除外する) を参照してください。
 
-不要なマスタ View は `choice-lists --prune` で計画を確認し、`_choice-lists --prune /y` で整理します。一覧 View と選択肢 View は別々に整理されます。
+不要なマスタ View は `choice-lists /prune` で計画を確認し、`_choice-lists /prune /y` で整理します。一覧 View と選択肢 View は別々に整理されます。
 
 SQL View は Pleasanter のユーザー・レコード権限を判定しません。DB の参照権限を設定してください。SQL View 全体の導入と変更時の扱いは [サイト View ガイド](サイトViewガイド.md) を参照してください。
 
@@ -39,6 +39,6 @@ SQL View は Pleasanter のユーザー・レコード権限を判定しませ�
 - Links のない `[[...]]` は、リンクとして働かない（本体は文字列として扱う）ため、推測せずに生成を停止します。
 - ChoicesText が JSON の配列（`[{"SiteId":...}]`）の JSON 形式のリンクも、リンク先が Wiki なら `[[N]]` と同じく Wiki の本文の行を展開します。JSON のその他の指定（View・Lookups・SearchFormat など）は Wiki では使いません。表（Results / Issues）をリンク先にした場合と、見つからないリンク先は、停止します。
 - 現在の Pleasanter 本体は、JSON 形式で Wiki を指した項目の選択肢が空になります（`[[N]]` 形式のときだけ本文の行が選択肢になります）。View は `[[N]]` 形式と同じ結果を返すため、この形式では画面の選択肢と View が異なります。
-- 除外指定（`--exclude-tree` / `--exclude-site`）で View の対象から外した Wiki も、選択肢の元として使えます。
+- 除外指定（`/exclude-tree` / `/exclude-site`）で View の対象から外した Wiki も、選択肢の元として使えます。
 
 現在の Pleasanter 本体は、Wiki の本文の行で `\,` のエスケープを解釈せず、前後の空白も除きません。本体の改修で ChoicesText と同じ扱いになる前提で、先に同じ規則に合わせています。改修までの間は、`\,` や前後の空白を含む行で、画面の選択肢と View の結果が異なります。

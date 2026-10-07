@@ -33,11 +33,11 @@ dotnet IndexCreator.dll _rds /p "C:\web\pleasanter\Implem.Pleasanter" /y
 
 ## サイト構成を変えたら
 
-再実行で不足分を補います。不要な管理索引も整理する場合は、計画を確認してから `--prune` を付けます。
+再実行で不足分を補います。不要な管理索引も整理する場合は、計画を確認してから `/prune` を付けます。
 
 ```powershell
-dotnet IndexCreator.dll plan --prune
-dotnet IndexCreator.dll _rds --prune /y
+dotnet IndexCreator.dll plan /prune
+dotnet IndexCreator.dll _rds /prune /y
 ```
 
 管理名は `IX_vvplic_{ReferenceType}_{SiteId}_{用途}_{定義ハッシュ16桁}`。同じ物理索引を複数サイトが使う場合は共有します。標準索引・他ツールの索引・列・テーブルは削除しません。新規作成と確認が成功してから古い管理索引を整理します。CodeDefiner がテーブルを作り直した後も `_rds /y` を再実行してください。
@@ -55,11 +55,11 @@ dotnet IndexCreator.dll _views /y
 
 固定選択肢のマスタ View も `choice-lists` / `_choice-lists` で生成できます。選択肢の編集は再実行しなくても View に反映されます。[選択肢 View ガイド](_documents/選択肢Viewガイド.md) を参照してください。
 
-特定のフォルダ配下やサイトは `--exclude-tree` / `--exclude-site` で View の対象から外せます。
+特定のフォルダ配下やサイトは `/exclude-tree` / `/exclude-site` で View の対象から外せます。
 
 ## 稼働中の環境で実行する
 
-索引はオンラインで作成し、ロック待ちは `--lock-timeout`（既定5秒）で打ち切って再試行します。業務を止めずに実行できるよう設計しています。オンライン作成に対応しない SQL Server のエディションでは停止するので、保守時間帯に `--offline` を付けて実行してください。詳しくは [利用ガイド](_documents/利用ガイド.md#稼働中の環境で実行する) を参照してください。
+索引はオンラインで作成し、ロック待ちは `/lock-timeout`（既定5秒）で打ち切って再試行します。業務を止めずに実行できるよう設計しています。オンライン作成に対応しない SQL Server のエディションでは停止するので、保守時間帯に `/offline` を付けて実行してください。詳しくは [利用ガイド](_documents/利用ガイド.md#稼働中の環境で実行する) を参照してください。
 
 ## 現在の対応範囲
 

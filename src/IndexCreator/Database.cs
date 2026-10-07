@@ -193,7 +193,7 @@ public sealed partial class Database : IAsyncDisposable
                 await Task.Delay(TimeSpan.FromSeconds(lockTimeout * attempt), ct);
             }
             catch (DbException e) when (IsLockTimeout(e)) { throw new UserError("Could not obtain a database lock within the wait limit. Completed steps remain applied; re-run when the workload is lighter."); }
-            catch (SqlException e) when (e.Number == 1712) { throw new UserError("This SQL Server edition cannot create indexes online. Re-run with --offline during a maintenance window."); }
+            catch (SqlException e) when (e.Number == 1712) { throw new UserError("This SQL Server edition cannot create indexes online. Re-run with /offline during a maintenance window."); }
         }
     }
     private static bool IsLockTimeout(DbException e) => e switch
