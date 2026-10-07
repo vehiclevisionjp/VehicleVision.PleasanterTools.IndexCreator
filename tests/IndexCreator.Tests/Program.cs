@@ -121,7 +121,28 @@ Check(multipleChoices.Count == 2 && multipleChoices.Select(v => v.Name).Distinct
 Check(multipleChoices[0].Choices![0].TextMini == "短縮" && multipleChoices[1].Choices![0].TextMini == "別表示", "Short label and fallback");
 Check(SiteView.IsManaged(choiceView.Name, true) && !SiteView.IsManaged(choiceView.Name), "Separate choice ownership scope");
 Check(Options.Parse(["_choice-lists", "/c"]).Action == "views-choices", "Choice check prevents writes");
-Check(new SqlDialect(Dbms.MySQL, "s").TextLiteral("a\\'") == "CONVERT(0x615C27 USING utf8mb4)" && new SqlDialect(Dbms.MySQL, "s").TextLiteral("a'b") == "'a''b'" && new SqlDialect(Dbms.PostgreSQL, "s").TextLiteral("a\\b") == "'a\\b'", "MySQL backslash literal is mode independent");
+Check(!new SqlDialect(Dbms.MySQL, "s").ChoiceSelect(1, "ClassA").Contains('\\'), "MySQL choice view does not depend on backslash escaping");
+var onlineCreate = new SqlDialect(Dbms.SQLServer, "dbo").Create(new IndexSpec("Results", [new("SiteId"), new("ClassA")]));
+Check(onlineCreate.Contains("WAIT_AT_LOW_PRIORITY", StringComparison.Ordinal) && onlineCreate.Split("CREATE INDEX").Length == onlineCreate.Split("ONLINE = ON").Length, "SQL Server online creation never silently falls back to offline");
+Check(Options.Parse(["_rds", "--lock-timeout", "3"]).LockTimeout == 3 && Options.Parse(["_rds"]).LockTimeout == 5, "Lock wait limit option");
+Reject(() => Options.Parse(["_rds", "--lock-timeout", "0"]), "Unlimited lock waits are refused");
+var tree = """
+    [{"SiteId":1,"ReferenceType":"Sites","ParentId":0,"RecordCount":0,"SiteSettings":{}},
+     {"SiteId":2,"ReferenceType":"Sites","ParentId":1,"RecordCount":0,"SiteSettings":{}},
+     {"SiteId":3,"ReferenceType":"Results","ParentId":2,"RecordCount":0,"SiteSettings":{}},
+     {"SiteId":4,"ReferenceType":"Results","ParentId":0,"RecordCount":0,"SiteSettings":{}},
+     {"SiteId":5,"ReferenceType":"Issues","ParentId":1,"RecordCount":0,"SiteSettings":{}}]
+    """;
+IReadOnlyList<long> Remaining(params string[] args) => Options.Parse(["views", "--sites", "s.json", .. args]).Exclusion!.Apply(Json.ReadSites(tree), Json.ReadSiteParents(tree)).Select(s => s.SiteId).ToArray();
+Check(Remaining("--exclude-tree", "2").SequenceEqual([4L, 5L]), "Folder exclusion removes the whole branch");
+Check(Remaining("--exclude-tree", "1").SequenceEqual([4L]), "Nested folders are excluded with their parent");
+Check(Remaining("--exclude-site", "3,5").SequenceEqual([4L]), "Single site exclusion keeps siblings");
+Check(Remaining("--exclude-site", "1").SequenceEqual([3L, 4L, 5L]), "Single folder exclusion does not cascade");
+Check(Remaining("--exclude-tree", "2", "--exclude-site", "4").SequenceEqual([5L]), "Both exclusion modes combine");
+Reject(() => Remaining("--exclude-tree", "99"), "Unknown excluded SiteId stops instead of being ignored");
+Reject(() => Options.Parse(["plan", "--exclude-site", "3"]), "Exclusions are limited to views");
+Reject(() => Options.Parse(["views", "--exclude-site", "3,3"]), "Duplicate excluded SiteId");
+Check(Options.Parse(["_choice-lists", "--exclude-tree", "1, 2"]).Exclusion!.Trees.SetEquals([1L, 2L]), "Choice lists accept exclusions");
 Reject(() => new ChoicePlanner().Generate([SiteWith("""{"Columns":[{"ColumnName":"ClassA","ChoicesText":"[[123]]"}]}""")]), "Dynamic choices cannot silently become static values");
 Console.WriteLine($"Unit checks passed: {passed}");
 
@@ -139,11 +160,11 @@ if (args.Contains("--integration"))
     await database.Open(default);
     var d = new SqlDialect(dbms, schema);
     if (dbms == Dbms.PostgreSQL) await database.Execute($"CREATE SCHEMA IF NOT EXISTS {d.Quote(schema)}");
-    var str = dbms == Dbms.SQLServer ? "nvarchar(max)" : "text";
+    var str = dbms switch { Dbms.SQLServer => "nvarchar(max)", Dbms.MySQL => "longtext", _ => "text" };
     var classType = dbms switch { Dbms.SQLServer => "nvarchar(1024)", Dbms.PostgreSQL => "varchar(1024)", _ => "text" };
     foreach (var table in new[] { "Results", "Issues", "Wikis" })
         await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("Status")} int)".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
-    await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str}, {d.Quote("Title")} {str})");
+    await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str}, {d.Quote("Title")} {str}, {d.Quote("ParentId")} bigint NOT NULL DEFAULT 0)");
     await database.Execute($"CREATE TABLE {d.Table("Items")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceId")} bigint NOT NULL, {d.Quote("Title")} {str})");
     if (dbms == Dbms.MySQL)
     {
@@ -154,7 +175,7 @@ if (args.Contains("--integration"))
     foreach (var table in new[] { "Results", "Issues", "Wikis" })
     {
         await database.Execute($"INSERT INTO {d.Table(table)} ({d.Quote("SiteId")},{d.Quote(table[..^1] + "Id")},{d.Quote("UpdatedTime")},{d.Quote("ClassA")},{d.Quote("Status")}) VALUES ({(table == "Results" ? 1 : table == "Issues" ? 2 : 3)},1,'2026-01-01','123',100)");
-        await database.Execute($"INSERT INTO {d.Table("Sites")} VALUES ({(table == "Results" ? 1 : table == "Issues" ? 2 : 3)},'{table}', '{{\"Columns\":[{{\"ColumnName\":\"ClassA\",\"ChoicesText\":\"A\"}}],\"Views\":[{{\"ColumnFilterHash\":{{\"ClassA\":\"A\"}}}}]}}', 'Test site')");
+        await database.Execute($"INSERT INTO {d.Table("Sites")} ({d.Quote("SiteId")},{d.Quote("ReferenceType")},{d.Quote("SiteSettings")},{d.Quote("Title")}) VALUES ({(table == "Results" ? 1 : table == "Issues" ? 2 : 3)},'{table}', '{{\"Columns\":[{{\"ColumnName\":\"ClassA\",\"ChoicesText\":\"A\"}}],\"Views\":[{{\"ColumnFilterHash\":{{\"ClassA\":\"A\"}}}}]}}', 'Test site')");
         await database.Execute($"CREATE INDEX {d.Quote("standard_" + table)} ON {d.Table(table)} ({d.Quote(table[..^1] + "Id")})");
     }
     await database.AcquireLock(default);
@@ -167,6 +188,8 @@ if (args.Contains("--integration"))
     var sites = await database.ReadSites(default);
     var desired = new Planner(dbms, 0).Analyze(sites).Indexes;
     Check(sites.Count == 3 && sites.All(s => s.RecordCount == 1), "Live site counts");
+    var liveParents = await database.ReadSiteParents(default);
+    Check(liveParents.Count == 3 && liveParents.Values.All(p => p == 0), "Live site hierarchy is readable");
     await database.ValidateColumns(desired, default);
     var first = Reconciler.Plan(desired, await database.ReadIndexes(default), true);
     await database.Apply(first, default);
@@ -239,21 +262,98 @@ if (args.Contains("--integration"))
     await using (System.Data.Common.DbConnection query = dbms switch { Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(cs), Dbms.PostgreSQL => new Npgsql.NpgsqlConnection(cs), _ => new MySqlConnector.MySqlConnection(cs) })
     {
         await query.OpenAsync();
-        await using var command = query.CreateCommand();
-        command.CommandText = "SELECT * FROM " + d.Table(choiceView.Name) + " ORDER BY " + d.Quote("Value");
-        await using var rows = await command.ExecuteReaderAsync();
-        Check(await rows.ReadAsync() && rows.GetString(0) == "100" && rows.GetString(1) == "受付" && rows.GetString(2) == "受付", "Live fixed choice value and Unicode label");
-        await rows.CloseAsync();
-        var slashView = new SiteView(9, "Results", [new("Value", "Value"), new("Text", "Text"), new("TextMini", "TextMini")], "Slash", [new("x\\", "a\\' b", "c")], "ClassA");
-        await database.ApplyViews([slashView], false, default, choices: true);
-        command.CommandText = "SELECT " + d.Quote("Value") + ", " + d.Quote("Text") + " FROM " + d.Table(slashView.Name);
-        await using var slashRows = await command.ExecuteReaderAsync();
-        Check(await slashRows.ReadAsync() && slashRows.GetString(0) == "x\\" && slashRows.GetString(1) == "a\\' b", "Live backslash choice value is preserved");
-        await slashRows.CloseAsync();
-        var manyView = new SiteView(10, "Results", slashView.Columns, "Many", Enumerable.Range(1, 5000).Select(n => new ChoiceRow(n.ToString(), "表示" + n, "短" + n)).ToArray(), "ClassA");
-        await database.ApplyViews([manyView], false, default, choices: true);
-        command.CommandText = "SELECT COUNT(*) FROM " + d.Table(manyView.Name);
-        Check(Convert.ToInt64(await command.ExecuteScalarAsync()) == 5000, "Live view holds thousands of fixed choices");
+        async Task SaveSite(long siteId, object settings, bool insert)
+        {
+            await using var save = query.CreateCommand();
+            save.CommandText = insert
+                ? $"INSERT INTO {d.Table("Sites")} ({d.Quote("SiteId")},{d.Quote("ReferenceType")},{d.Quote("SiteSettings")},{d.Quote("Title")}) VALUES (@id,'Results',@settings,'選択肢')"
+                : $"UPDATE {d.Table("Sites")} SET {d.Quote("SiteSettings")}=@settings WHERE {d.Quote("SiteId")}=@id";
+            foreach (var (key, value) in new (string, object)[] { ("@id", siteId), ("@settings", System.Text.Json.JsonSerializer.Serialize(settings)) })
+            {
+                var parameter = save.CreateParameter(); parameter.ParameterName = key; parameter.Value = value; save.Parameters.Add(parameter);
+            }
+            await save.ExecuteNonQueryAsync();
+        }
+        async Task<List<ChoiceRow>> ReadChoices(SiteView view)
+        {
+            await using var read = query.CreateCommand();
+            read.CommandText = "SELECT * FROM " + d.Table(view.Name);
+            await using var rows = await read.ExecuteReaderAsync();
+            var result = new List<ChoiceRow>();
+            while (await rows.ReadAsync()) result.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2)));
+            return result;
+        }
+        // 本体の区切り規則を DB の組込関数で再現できるかを、同じ設定の .NET 解析結果と比べる。
+        var lines = "100,受付\r\n 200,完了 \n100,duplicate\n300\\,x,引用'名称\n\n　全角　\nb\\\\,c\na,,短\nAbc,upper\nabc,lower\nq\"uote,\"x\",y,css,style\n";
+        object Settings(string choices) => new { Columns = new object[] { new { ColumnName = "ClassA", ChoicesText = choices }, new { ColumnName = "ClassB", ChoicesText = "1,表示,短縮" }, new { ColumnName = "ClassC", ControlType = "Spinner", ChoicesText = "9" } } };
+        await SaveSite(11, Settings(lines), true);
+        var liveSite = new Site(11, "Results", Json.Parse(System.Text.Json.JsonSerializer.Serialize(Settings(lines))), 0, "選択肢");
+        var liveChoices = new ChoicePlanner().Generate([liveSite]);
+        Check(liveChoices.Select(v => v.ChoiceColumn).SequenceEqual(["ClassA", "ClassB"]), "Live choice views follow ControlType");
+        await database.ApplyViews(liveChoices, false, default, choices: true);
+        var expected = liveChoices[0].Choices!.OrderBy(c => c.Value, StringComparer.Ordinal).ToArray();
+        var actual = (await ReadChoices(liveChoices[0])).OrderBy(c => c.Value, StringComparer.Ordinal).ToArray();
+        Check(expected.Length == 9 && actual.SequenceEqual(expected), "Built-in parsing matches Pleasanter choice rules: " + string.Join(" | ", actual.Except(expected)) + " <> " + string.Join(" | ", expected.Except(actual)));
+        Check((await ReadChoices(liveChoices[1])).Single() == new ChoiceRow("1", "表示", "短縮"), "Second column of the same site");
+        await SaveSite(11, Settings(lines + "999,追加\n[[Users]]\n"), false);
+        var edited = await ReadChoices(liveChoices[0]);
+        Check(edited.Count == 10 && edited.Contains(new ChoiceRow("999", "追加", "追加")), "Choice edits appear without recreating the view");
+        await SaveSite(12, Settings(string.Join("\n", Enumerable.Range(1, 5000).Select(n => $"{n},表示{n},短{n}"))), true);
+        var many = new ChoicePlanner().Generate([new Site(12, "Results", Json.Parse(System.Text.Json.JsonSerializer.Serialize(Settings("1"))), 0, "大量")])[0];
+        await database.ApplyViews([many], false, default, choices: true);
+        Check((await ReadChoices(many)).Count == 5000, "Live view expands thousands of choices");
+    }
+    // 稼働中の取引がロックを持つ間も、DDL のロック待ちで業務クエリを止めない。
+    var lockSpec = new IndexSpec("Results", [new("Status"), new("ClassA", Prefix: dbms == Dbms.MySQL ? 10 : 0), new("UpdatedTime", true)]);
+    Check(!(await database.ReadIndexes(default)).Any(i => i.Name == lockSpec.Name), "Lock test index is new");
+    System.Data.Common.DbConnection Connect() => dbms switch { Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(cs), Dbms.PostgreSQL => new Npgsql.NpgsqlConnection(cs), _ => new MySqlConnector.MySqlConnection(cs) };
+    await using (var blocker = Connect())
+    {
+        await blocker.OpenAsync();
+        await using var transaction = await blocker.BeginTransactionAsync();
+        await using var hold = blocker.CreateCommand();
+        hold.Transaction = transaction;
+        hold.CommandText = dbms switch
+        {
+            Dbms.SQLServer => $"SELECT COUNT(*) FROM {d.Table("Results")} WITH (UPDLOCK, HOLDLOCK)",
+            Dbms.PostgreSQL => $"LOCK TABLE {d.Table(choiceView.Name)} IN ACCESS SHARE MODE",
+            _ => $"SELECT COUNT(*) FROM {d.Table("Results")}"
+        };
+        await hold.ExecuteNonQueryAsync();
+        await using var impatient = new Database(configuration, false, 1);
+        await impatient.Open(default);
+        if (dbms == Dbms.SQLServer)
+        {
+            // SQL Server 2022 以降は低優先度で待つため、待機中に後から来た更新を先に通す。
+            var pending = impatient.Apply(Reconciler.Plan([lockSpec], await impatient.ReadIndexes(default), false), default);
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            await using (var worker = Connect())
+            {
+                await worker.OpenAsync();
+                await using var update = worker.CreateCommand();
+                update.CommandText = $"UPDATE {d.Table("Results")} SET {d.Quote("Status")}={d.Quote("Status")} WHERE 1=0";
+                update.CommandTimeout = 5;
+                await update.ExecuteNonQueryAsync();
+                Check(!pending.IsCompleted, "Business writes pass a waiting online index build");
+            }
+            await transaction.RollbackAsync();
+            await pending;
+            Check((await database.ReadIndexes(default)).Any(i => i.Name == lockSpec.Name), "Online index completes after the blocker ends");
+        }
+        else
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var gaveUp = false;
+            try
+            {
+                if (dbms == Dbms.PostgreSQL) await impatient.ApplyViews([choiceView], false, default, choices: true);
+                else await impatient.Apply(Reconciler.Plan([lockSpec], await impatient.ReadIndexes(default), false), default);
+            }
+            catch (UserError) { gaveUp = true; }
+            Check(gaveUp && watch.Elapsed < TimeSpan.FromSeconds(30), "DDL gives up within the lock wait limit");
+            await transaction.RollbackAsync();
+            Check(!(await database.ReadIndexes(default)).Any(i => i.Name == lockSpec.Name), "Abandoned DDL leaves no partial index");
+        }
     }
     await database.ApplyViews([], true, default);
     Check((await database.ReadViewNames(default)).Contains("standard_site_view") && !(await database.ReadViewNames(default)).Contains(liveView.Name), "Only managed views pruned");

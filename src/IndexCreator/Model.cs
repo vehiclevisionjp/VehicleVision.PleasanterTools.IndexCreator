@@ -107,4 +107,31 @@ public static class Json
         if (sites.Select(s => s.SiteId).Distinct().Count() != sites.Count) throw new UserError("Duplicate SiteId in input.");
         return sites;
     }
+    // フォルダを含む全サイトの親子関係。ParentId が省略された行は最上位として扱う。
+    public static IReadOnlyDictionary<long, long> ReadSiteParents(string text)
+    {
+        var parents = new Dictionary<long, long>();
+        foreach (var row in Parse(text).EnumerateArray())
+            if (row.Get("SiteId").TryGetInt64(out var id) && !parents.TryAdd(id, row.Get("ParentId").TryGetInt64(out var parent) ? parent : 0))
+                throw new UserError("Duplicate SiteId in input.");
+        return parents;
+    }
+}
+// View の対象から外すサイト。Trees は指定したサイト（通常はフォルダ）とその配下すべて、Sites は指定したサイトだけ。
+public sealed record SiteExclusion(IReadOnlySet<long> Trees, IReadOnlySet<long> Sites)
+{
+    public static readonly SiteExclusion None = new(new HashSet<long>(), new HashSet<long>());
+    public bool IsEmpty => Trees.Count == 0 && Sites.Count == 0;
+    public IReadOnlyList<Site> Apply(IReadOnlyList<Site> sites, IReadOnlyDictionary<long, long> parents)
+    {
+        if (Trees.Concat(Sites).Any(id => !parents.ContainsKey(id))) throw new UserError("An excluded SiteId does not exist. No views were applied.");
+        bool InTree(long id)
+        {
+            var visited = new HashSet<long>();
+            for (var current = id; current > 0 && visited.Add(current); current = parents.GetValueOrDefault(current))
+                if (Trees.Contains(current)) return true;
+            return false;
+        }
+        return sites.Where(s => !Sites.Contains(s.SiteId) && !InTree(s.SiteId)).ToArray();
+    }
 }
