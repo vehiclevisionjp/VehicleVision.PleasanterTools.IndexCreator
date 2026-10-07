@@ -17,7 +17,7 @@ dotnet IndexCreator.dll _choice-lists /y
 | Text | 選択肢の表示名 |
 | TextMini | 選択肢の短縮名 |
 
-ChoicesText の `値,表示名,短縮名` を読みます。表示テキストが空なら値を使います。エスケープしたカンマに対応し、同じ項目で同じ値が繰り返される場合は最初の定義を使います。短縮名が空なら表示名を使います。項目ごとに View を作るため、同じサイトの ClassA と ClassB は別名で取得できます。固定選択肢がない項目の View は作りません。
+ChoicesText の `値,表示名,短縮名` を読みます。表示テキストが空なら値を使います。エスケープしたカンマに対応し、同じ項目で同じ値が繰り返される場合は最初の定義を使います。短縮名が空なら表示名を使います。項目ごとに View を作るため、同じサイトの ClassA と ClassB は別名で取得できます。固定選択肢がない項目、および ControlType が空または ChoicesText 以外の項目の View は作りません。
 
 この機能は設定に列挙された固定選択肢を対象にします。`[[サイトID]]`、ユーザー・組織・グループなどの動的な選択肢を含む場合は生成を停止します。区切り・置換は本体の General.json の ChoiceSplitRegexPattern / ChoiceReplaceRegexPattern / ChoiceReplaceRegexReplacement を読みます。
 

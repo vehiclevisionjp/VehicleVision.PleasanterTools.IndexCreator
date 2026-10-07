@@ -107,6 +107,9 @@ Check(Options.Parse(["_views", "/c"]).Action == "views", "Views check prevents m
 Check(RuntimeLog.FileName(new DateTime(2026, 10, 7, 12, 34, 56)) == "VehicleVision.PleasanterTools.IndexCreator_20261007_123456.log", "CodeDefiner log naming convention");
 Check(Plan(Dbms.SQLServer, "{}").Indexes.Single().Keys[^1].Column == "ResultId", "Result identifier mapping");
 Check(new Planner(Dbms.SQLServer).Analyze([SiteWith("{}", table: "Wikis")]).Indexes.Single().Keys[^1].Column == "WikiId", "Wiki identifier mapping");
+Reject(() => new ViewPlanner(Dbms.SQLServer).Generate([SiteWith("""{"GridColumns":["WikiId","ClassA"]}""", table: "Wikis")]), "Wiki sites reject columns the table lacks");
+Reject(() => new ViewPlanner(Dbms.SQLServer).Generate([SiteWith("""{"GridColumns":["WikiId","Status"]}""", table: "Wikis")]), "Wiki sites reject Status");
+Check(new ChoicePlanner().Generate([SiteWith("""{"Columns":[{"ColumnName":"ClassA","ControlType":"Spinner","ChoicesText":"1"},{"ColumnName":"ClassB","ControlType":"ChoicesText","ChoicesText":"1"}]}""")]).Single().ChoiceColumn == "ClassB", "Choice export follows ControlType");
 Check(Json.ReadSites("""[{"SiteId":3,"ReferenceType":"Wikis","RecordCount":1,"SiteSettings":{}}]""").Count == 1, "Wiki sites accepted");
 var choiceSite = SiteWith("""{"Columns":[{"ColumnName":"ClassA","ChoicesText":"100,受付\n200,完了\n100,duplicate\n300\\,x,引用'名称"}]}""") with { Title = "選択肢" };
 var choiceView = new ChoicePlanner().Generate([choiceSite]).Single();

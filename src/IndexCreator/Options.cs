@@ -9,7 +9,7 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
     {
         if (args.Length == 0 || args[0] is "--help" or "-h" or "help") return new("help", null, null, null, null, 10000, 100, false, false, false, false, null);
         var action = args[0] switch { "_rds" => "apply", "_views" => "views-apply", "choice-lists" => "views-choices", "_choice-lists" or "choice-lists-apply" => "views-choices-apply", _ => args[0] };
-        if (action is not ("plan" or "apply" or "views" or "views-apply" or "views-choices" or "views-choices-apply")) throw new UserError("Unknown action. Use plan, apply, views or _views.");
+        if (action is not ("plan" or "apply" or "views" or "views-apply" or "views-choices" or "views-choices-apply")) throw new UserError("Unknown action. Use plan, apply, views, _views, choice-lists or _choice-lists.");
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         var flags = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 1; i < args.Length; i++)
