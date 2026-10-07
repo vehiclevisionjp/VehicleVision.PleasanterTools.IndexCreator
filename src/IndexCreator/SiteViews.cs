@@ -7,7 +7,9 @@ namespace VehicleVision.PleasanterTools.IndexCreator;
 
 public sealed record ViewColumn(string Source, string Alias);
 public sealed record ChoiceRow(string Value, string Text, string TextMini);
-public sealed record SiteView(long SiteId, string Table, IReadOnlyList<ViewColumn> Columns, string SiteName = "", IReadOnlyList<ChoiceRow>? Choices = null, string? ChoiceColumn = null)
+// 選択肢のリンク先 Wiki のサイト。Line は Links に並ぶ順（1 始まり）で、選択肢の並びと重複の優先順位になる。
+public sealed record WikiChoiceSource(int Line, long SiteId);
+public sealed record SiteView(long SiteId, string Table, IReadOnlyList<ViewColumn> Columns, string SiteName = "", IReadOnlyList<ChoiceRow>? Choices = null, string? ChoiceColumn = null, IReadOnlyList<WikiChoiceSource>? WikiSources = null)
 {
     public const string Prefix = "View_vvplic_";
     public string Name
@@ -33,7 +35,7 @@ public sealed record SiteView(long SiteId, string Table, IReadOnlyList<ViewColum
     public static bool IsManaged(string name, bool choices = false) => Regex.IsMatch(name, "^" + Prefix + (choices ? "ChoiceList_" : "") + @"(Results|Issues|Wikis)_[1-9][0-9]{0,18}_[\p{L}\p{N}_-]+$", RegexOptions.CultureInvariant) && Encoding.UTF8.GetByteCount(name) <= 63;
     public string Select(SqlDialect d)
     {
-        if (Choices != null) return d.ChoiceSelect(SiteId, ChoiceColumn!);
+        if (Choices != null) return d.ChoiceSelect(SiteId, ChoiceColumn!, WikiSources);
         var expressions = Columns.Select(c => (c.Source == "Title" ? "i." : "r.") + d.Quote(c.Source) + " AS " + d.Quote(c.Alias));
         var id = Table[..^1] + "Id";
         var join = Columns.Any(c => c.Source == "Title") ? $" INNER JOIN {d.Table("Items")} i ON i.{d.Quote("ReferenceId")}=r.{d.Quote(id)} AND i.{d.Quote("SiteId")}=r.{d.Quote("SiteId")}" : "";
@@ -41,7 +43,7 @@ public sealed record SiteView(long SiteId, string Table, IReadOnlyList<ViewColum
     }
     public IReadOnlyList<IndexSpec> RequiredColumns()
     {
-        if (Choices != null) return [];
+        if (Choices != null) return WikiSources is { Count: > 0 } ? [new("Wikis", [new("SiteId"), new("Body")])] : [];
         var id = Table[..^1] + "Id";
         var specs = new List<IndexSpec> { new(Table, Columns.Where(c => c.Source != "Title").Select(c => new Key(c.Source)).Concat([new("SiteId"), new(id)]).ToArray()) };
         if (Columns.Any(c => c.Source == "Title")) specs.Add(new("Items", [new("ReferenceId"), new("SiteId"), new("Title")]));
