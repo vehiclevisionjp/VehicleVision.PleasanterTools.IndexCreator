@@ -159,12 +159,14 @@ Check(mixedChoices.WikiSources!.Single() == new WikiChoiceSource(1, 30) && mixed
 Check(new ChoicePlanner().Generate([Linked("[[30]]", wikiLink)], [wikiMaster]).Count == 1, "Excluded Wiki site can still be a choice source");
 Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", wikiLink)]), "Unknown linked site stops instead of producing an empty view");
 Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", "[]")], [wikiMaster]), "A [[N]] line without a Links setting is not a link");
-Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]), "JSON-format links are not choice links");
+Check(new ChoicePlanner().Generate([Linked("[[30]]", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]).Single().WikiSources!.Single() == new WikiChoiceSource(1, 30), "A JSON-format link to a Wiki reads the Wiki body too");
 Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", wikiLink)], [new Site(30, "Results", Json.Parse("{}"), 0, "Table")]), "Links to tables stop until supported");
 var secondWiki = new Site(32, "Wikis", Json.Parse("{}"), 0, "Second");
 var twoLinks = new ChoicePlanner().Generate([Linked("[[32]]\n[[30]]", """[{"ColumnName":"ClassA","SiteId":32},{"ColumnName":"ClassA","SiteId":30}]""")], [wikiMaster, secondWiki]).Single();
 Check(twoLinks.WikiSources!.SequenceEqual([new WikiChoiceSource(1, 32), new WikiChoiceSource(2, 30)]), "Multiple Wiki links keep the Links order");
-Reject(() => new ChoicePlanner().Generate([Linked("""[{"SiteId":30}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]), "JSON-notation link choices stop");
+Check(new ChoicePlanner().Generate([Linked("""[{"SiteId":30,"View":{"ColumnFilterExpressions":[]}}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]).Single().WikiSources!.Single().SiteId == 30, "JSON notation with extra settings still expands the Wiki body");
+Reject(() => new ChoicePlanner().Generate([Linked("""[{"SiteId":30}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [new Site(30, "Results", Json.Parse("{}"), 0, "Table")]), "JSON-format links to tables stop");
+Check(new ChoicePlanner().Generate([Linked("""[{"SiteId":32},{"SiteId":30}]""", """[{"ColumnName":"ClassA","SiteId":32,"JsonFormat":true},{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster, secondWiki]).Single().WikiSources!.Select(w => w.SiteId).SequenceEqual([32L, 30L]), "JSON-format links keep the Links order");
 Reject(() => new ChoicePlanner().Generate([Linked("""[{"SiteId":30}]""", "[]")], [wikiMaster]), "JSON notation without Links is not read as a plain choice");
 Check(new ChoicePlanner().Generate([Linked("[A],表示", "[]")]).Single().Choices!.Single().Value == "[A]", "A bracketed plain choice is still a choice");
 Console.WriteLine($"Unit checks passed: {passed}");
