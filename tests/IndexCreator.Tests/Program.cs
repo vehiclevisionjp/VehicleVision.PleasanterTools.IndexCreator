@@ -148,6 +148,25 @@ Reject(() => Options.Parse(["plan", "--exclude-site", "3"]), "Exclusions are lim
 Reject(() => Options.Parse(["views", "--exclude-site", "3,3"]), "Duplicate excluded SiteId");
 Check(Options.Parse(["_choice-lists", "--exclude-tree", "1, 2"]).Exclusion!.Trees.SetEquals([1L, 2L]), "Choice lists accept exclusions");
 Reject(() => new ChoicePlanner().Generate([SiteWith("""{"Columns":[{"ColumnName":"ClassA","ChoicesText":"[[123]]"}]}""")]), "Dynamic choices cannot silently become static values");
+var wikiMaster = new Site(30, "Wikis", Json.Parse("{}"), 0, "Master");
+Site Linked(string choices, string links) => new(31, "Results", Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { Columns = new object[] { new { ColumnName = "ClassA", ChoicesText = choices } }, Links = System.Text.Json.JsonSerializer.Deserialize<object>(links) })), 0, "Linked");
+const string wikiLink = """[{"ColumnName":"ClassA","SiteId":30}]""";
+var wikiChoices = new ChoicePlanner().Generate([Linked("[[30]]", wikiLink)], [Linked("[[30]]", wikiLink), wikiMaster]).Single();
+Check(wikiChoices.WikiSources!.Single() == new WikiChoiceSource(1, 30) && wikiChoices.Choices!.Count == 0, "Wiki link choice is read from the Wiki body");
+Check(wikiChoices.RequiredColumns().Single().Table == "Wikis", "Wiki body column is validated before applying");
+var mixedChoices = new ChoicePlanner().Generate([Linked("own,自項目\n[[30,NoAddButton]]\nafter,後続", wikiLink)], [wikiMaster]).Single();
+Check(mixedChoices.WikiSources!.Single() == new WikiChoiceSource(1, 30) && mixedChoices.Choices!.Count == 0, "A linked column ignores its plain lines, as Pleasanter does");
+Check(new ChoicePlanner().Generate([Linked("[[30]]", wikiLink)], [wikiMaster]).Count == 1, "Excluded Wiki site can still be a choice source");
+Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", wikiLink)]), "Unknown linked site stops instead of producing an empty view");
+Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", "[]")], [wikiMaster]), "A [[N]] line without a Links setting is not a link");
+Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]), "JSON-format links are not choice links");
+Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", wikiLink)], [new Site(30, "Results", Json.Parse("{}"), 0, "Table")]), "Links to tables stop until supported");
+var secondWiki = new Site(32, "Wikis", Json.Parse("{}"), 0, "Second");
+var twoLinks = new ChoicePlanner().Generate([Linked("[[32]]\n[[30]]", """[{"ColumnName":"ClassA","SiteId":32},{"ColumnName":"ClassA","SiteId":30}]""")], [wikiMaster, secondWiki]).Single();
+Check(twoLinks.WikiSources!.SequenceEqual([new WikiChoiceSource(1, 32), new WikiChoiceSource(2, 30)]), "Multiple Wiki links keep the Links order");
+Reject(() => new ChoicePlanner().Generate([Linked("""[{"SiteId":30}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]), "JSON-notation link choices stop");
+Reject(() => new ChoicePlanner().Generate([Linked("""[{"SiteId":30}]""", "[]")], [wikiMaster]), "JSON notation without Links is not read as a plain choice");
+Check(new ChoicePlanner().Generate([Linked("[A],表示", "[]")]).Single().Choices!.Single().Value == "[A]", "A bracketed plain choice is still a choice");
 Console.WriteLine($"Unit checks passed: {passed}");
 
 if (args.Contains("--integration"))
@@ -169,7 +188,7 @@ if (args.Contains("--integration"))
     var str = dbms switch { Dbms.SQLServer => "nvarchar(max)", Dbms.MySQL => "longtext", _ => "text" };
     var classType = dbms switch { Dbms.SQLServer => "nvarchar(1024)", Dbms.PostgreSQL => "varchar(1024)", _ => "text" };
     foreach (var table in new[] { "Results", "Issues", "Wikis" })
-        await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("Status")} int)".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
+        await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("Status")} int{(table == "Wikis" ? $", {d.Quote("Body")} {str}" : "")})".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
     await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str}, {d.Quote("Title")} {str}, {d.Quote("ParentId")} bigint NOT NULL DEFAULT 0)");
     await database.Execute($"CREATE TABLE {d.Table("Items")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceId")} bigint NOT NULL, {d.Quote("Title")} {str})");
     if (dbms == Dbms.MySQL)
@@ -301,6 +320,27 @@ if (args.Contains("--integration"))
         var actual = (await ReadChoices(liveChoices[0])).OrderBy(c => c.Value, StringComparer.Ordinal).ToArray();
         Check(expected.Length == 9 && actual.SequenceEqual(expected), "Built-in parsing matches Pleasanter choice rules: " + string.Join(" | ", actual.Except(expected)) + " <> " + string.Join(" | ", expected.Except(actual)));
         Check((await ReadChoices(liveChoices[1])).Single() == new ChoiceRow("1", "表示", "短縮"), "Second column of the same site");
+        // Wiki をリンク先にした選択肢。本文の行を、自項目の行と同じ規則（\, のエスケープ・前後の空白・重複）で展開する。
+        async Task SetWikiBody(string body)
+        {
+            await using var save = query.CreateCommand();
+            save.CommandText = $"UPDATE {d.Table("Wikis")} SET {d.Quote("Body")}=@body WHERE {d.Quote("SiteId")}=3";
+            var parameter = save.CreateParameter(); parameter.ParameterName = "@body"; parameter.Value = body; save.Parameters.Add(parameter);
+            await save.ExecuteNonQueryAsync();
+        }
+        var bs2 = "\\";
+        await SetWikiBody("a,Alpha\r\nb" + bs2 + ",c,カンマ付き,短\n a,重複\n　z　\nown1,wiki側\n");
+        object LinkedSettings() => new { Columns = new object[] { new { ColumnName = "ClassA", ChoicesText = "own1,自項目\n[[3]]\nown2,後続" } }, Links = new object[] { new { ColumnName = "ClassA", SiteId = 3 } } };
+        await SaveSite(14, LinkedSettings(), true);
+        var linkedSite = new Site(14, "Results", Json.Parse(System.Text.Json.JsonSerializer.Serialize(LinkedSettings())), 0, "選択肢");
+        var wikiChoiceSite = new Site(3, "Wikis", Json.Parse("{}"), 1, "Test site");
+        var wikiChoiceView = new ChoicePlanner().Generate([linkedSite], [linkedSite, wikiChoiceSite]).Single();
+        await database.ApplyViews([wikiChoiceView], false, default, choices: true);
+        var expectedLinked = new[] { new ChoiceRow("a", "Alpha", "Alpha"), new ChoiceRow("b,c", "カンマ付き", "短"), new ChoiceRow("own1", "wiki側", "wiki側"), new ChoiceRow("z", "z", "z") };
+        var actualLinked = (await ReadChoices(wikiChoiceView)).OrderBy(c => c.Value, StringComparer.Ordinal).ToArray();
+        Check(actualLinked.SequenceEqual(expectedLinked), "Wiki link expands with escape, trimming and first-wins, ignoring plain lines: " + string.Join(" | ", actualLinked.Select(c => c.Value + "/" + c.Text)));
+        await SetWikiBody("new,追加済み");
+        Check((await ReadChoices(wikiChoiceView)).Single().Value == "new", "Wiki body edits appear without recreating the view");
         await using (var join = query.CreateCommand())
         {
             join.CommandText = $"SELECT COUNT(*) FROM {d.Table("Results")} r INNER JOIN {d.Table(liveChoices[0].Name)} v ON v.{d.Quote("Value")} = r.{d.Quote("ClassA")}";

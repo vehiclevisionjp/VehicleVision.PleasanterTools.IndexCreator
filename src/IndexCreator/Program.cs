@@ -124,7 +124,7 @@ public static class Program
             RuntimeLog.WriteLine($"Excluded sites: {sites.Count - targets.Count}.");
         }
         var choices = options.Action.Contains("choices", StringComparison.Ordinal);
-        var views = choices ? new ChoicePlanner(options.Path).Generate(targets) : new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path)).Generate(targets);
+        var views = choices ? new ChoicePlanner(options.Path).Generate(targets, sites) : new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path)).Generate(targets);
         if (database != null) await database.ValidateColumns(views.SelectMany(v => v.RequiredColumns()).ToArray(), ct);
         var dialect = new SqlDialect(config.Dbms, config.Schema);
         if (choices && database != null && config.Dbms == Dbms.MySQL) dialect.Collation = await database.ReadSchemaCollation(ct);

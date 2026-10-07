@@ -21,7 +21,8 @@ services:
       MYSQL_DATABASE: IndexCreatorTest
     ports: ['127.0.0.1:53306:3306']
     healthcheck:
-      test: ['CMD-SHELL', 'mysqladmin ping -h localhost -p$$MYSQL_ROOT_PASSWORD']
+      # 初期化中の一時サーバーは TCP を受け付けない。ソケット（localhost）で ping すると本番の起動前に healthy になるため、TCP で確認する。
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -p$$MYSQL_ROOT_PASSWORD']
       interval: 5s
       timeout: 3s
       retries: 40
