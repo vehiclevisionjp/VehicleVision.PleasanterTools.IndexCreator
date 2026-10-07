@@ -118,6 +118,7 @@ Check(multipleChoices.Count == 2 && multipleChoices.Select(v => v.Name).Distinct
 Check(multipleChoices[0].Choices![0].TextMini == "短縮" && multipleChoices[1].Choices![0].TextMini == "別表示", "Short label and fallback");
 Check(SiteView.IsManaged(choiceView.Name, true) && !SiteView.IsManaged(choiceView.Name), "Separate choice ownership scope");
 Check(Options.Parse(["_choice-lists", "/c"]).Action == "views-choices", "Choice check prevents writes");
+Check(new SqlDialect(Dbms.MySQL, "s").TextLiteral("a\\'") == "CONVERT(0x615C27 USING utf8mb4)" && new SqlDialect(Dbms.MySQL, "s").TextLiteral("a'b") == "'a''b'" && new SqlDialect(Dbms.PostgreSQL, "s").TextLiteral("a\\b") == "'a\\b'", "MySQL backslash literal is mode independent");
 Reject(() => new ChoicePlanner().Generate([SiteWith("""{"Columns":[{"ColumnName":"ClassA","ChoicesText":"[[123]]"}]}""")]), "Dynamic choices cannot silently become static values");
 Console.WriteLine($"Unit checks passed: {passed}");
 
@@ -239,6 +240,12 @@ if (args.Contains("--integration"))
         command.CommandText = "SELECT * FROM " + d.Table(choiceView.Name) + " ORDER BY " + d.Quote("Value");
         await using var rows = await command.ExecuteReaderAsync();
         Check(await rows.ReadAsync() && rows.GetString(0) == "100" && rows.GetString(1) == "受付" && rows.GetString(2) == "受付", "Live fixed choice value and Unicode label");
+        await rows.CloseAsync();
+        var slashView = new SiteView(9, "Results", [new("Value", "Value"), new("Text", "Text"), new("TextMini", "TextMini")], "Slash", [new("x\\", "a\\' b", "c")], "ClassA");
+        await database.ApplyViews([slashView], false, default, choices: true);
+        command.CommandText = "SELECT " + d.Quote("Value") + ", " + d.Quote("Text") + " FROM " + d.Table(slashView.Name);
+        await using var slashRows = await command.ExecuteReaderAsync();
+        Check(await slashRows.ReadAsync() && slashRows.GetString(0) == "x\\" && slashRows.GetString(1) == "a\\' b", "Live backslash choice value is preserved");
     }
     await database.ApplyViews([], true, default);
     Check((await database.ReadViewNames(default)).Contains("standard_site_view") && !(await database.ReadViewNames(default)).Contains(liveView.Name), "Only managed views pruned");
