@@ -34,17 +34,17 @@ public sealed class ChoicePlanner
                 if (!Regex.IsMatch(name, "^[A-Za-z][A-Za-z0-9]*$", RegexOptions.CultureInvariant)) throw new UserError("Invalid choice column name.");
                 var columns = new List<ViewColumn> { new("Value", "Value"), new("Text", "Text"), new("TextMini", "TextMini") };
                 // リンクかどうかは Links で判断する。Links は本体が保存時に ChoicesText から作る（[[N]] の行、または JSON 形式）。
+                // JSON 形式（JsonFormat）のリンクも、リンク先が Wiki なら [[N]] と同じく Wiki の本文の行を展開する。JSON のその他の指定（View・Lookups など）は Wiki では使わない。
                 // 本体の Column.Linked と同じく、SiteId のある設定が1つでもあればリンク項目で、他の行は選択肢に使われない。
                 var links = site.SiteSettings.Get("Links").Array().Where(l => l.Get("ColumnName").Text() == name && l.Get("SiteId").TryGetInt64(out var id) && id > 0).ToArray();
                 if (links.Length > 0)
                 {
-                    if (links.Any(l => l.Get("JsonFormat").Bool())) throw new UserError("JSON-format link choices are not supported. No choice views were applied.");
                     var wikis = links.Select((l, i) => new WikiChoiceSource(i + 1, WikiSite(l.Get("SiteId").GetInt64(), lookup))).ToArray();
                     views.Add(new(site.SiteId, site.ReferenceType, columns, site.Title, [], name, wikis));
                     continue;
                 }
-                // Links がなくても、ChoicesText が JSON の配列なら JSON 形式のリンク（本体の SetLinks と同じ判定）。
-                if (LooksLikeJsonLinks(text)) throw new UserError("JSON-format link choices are not supported. No choice views were applied.");
+                // Links がなくても、ChoicesText が JSON の配列なら JSON 形式のリンク（本体の SetLinks と同じ判定）。Links は本体が保存時に作るので、リンク先を推測せずに停止する。
+                if (LooksLikeJsonLinks(text)) throw new UserError("A JSON-format link without a Links setting is not read. Save the site settings in Pleasanter to generate Links. No choice views were applied.");
                 var rows = new List<ChoiceRow>();
                 var seen = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var line in text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Select(l => l.Trim()).Where(l => l != ""))
