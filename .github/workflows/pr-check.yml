@@ -1,0 +1,27 @@
+name: PR の規約検査
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review, converted_to_draft]
+    branches: [develop, master]
+permissions:
+  contents: read
+jobs:
+  conventions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: タイトルと Issue の紐付けを確認する
+        shell: pwsh
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if ($env:PR_BASE -eq 'master' -and $env:PR_HEAD -eq 'develop') {
+            Write-Output 'Release promotion PR.'
+            exit 0
+          }
+          if ($env:PR_BODY -notmatch '(?i)(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#[0-9]+') { throw 'PR body must include Closes #N.' }
+          if ($env:PR_DRAFT -eq 'true' -and $env:PR_TITLE -notmatch '^WIP:') { throw 'Draft PR title must start with WIP:.' }
+          if ($env:PR_DRAFT -ne 'true' -and $env:PR_TITLE -match '^WIP:') { throw 'Remove WIP: when the PR is ready.' }

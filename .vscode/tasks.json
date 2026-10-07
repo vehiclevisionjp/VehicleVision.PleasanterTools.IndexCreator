@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "build", "type": "shell", "command": "dotnet build -c Release", "group": "build", "problemMatcher": "$msCompile" },
+    { "label": "test", "type": "shell", "command": "pwsh -File scripts/test.ps1", "group": "test", "problemMatcher": [] },
+    { "label": "test PostgreSQL", "type": "shell", "command": "pwsh -File scripts/test.ps1 -Dbms PostgreSQL", "problemMatcher": [] },
+    { "label": "test SQLServer", "type": "shell", "command": "pwsh -File scripts/test.ps1 -Dbms SQLServer", "problemMatcher": [] },
+    { "label": "test MySQL", "type": "shell", "command": "pwsh -File scripts/test.ps1 -Dbms MySQL", "problemMatcher": [] }
+  ]
+}

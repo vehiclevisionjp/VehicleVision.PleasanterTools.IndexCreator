@@ -1,0 +1,22 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - run: dotnet restore --locked-mode
+      - run: dotnet build -c Release --no-restore
+      - run: pwsh -File scripts/test.ps1
+      - run: pwsh -File scripts/package.ps1
+      - name: 配布 ZIP を下書きリリースへ添付する
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/package/*.zip* --draft --title "$GITHUB_REF_NAME" --generate-notes
