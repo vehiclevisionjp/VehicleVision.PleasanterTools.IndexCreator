@@ -64,7 +64,7 @@ public sealed record Configuration(Dbms Dbms, string Schema, string ConnectionSt
         var service = File.Exists(serviceFile) ? Json.Parse(File.ReadAllText(serviceFile)) : default;
         var serviceName = service.Get("Name").Text();
         if (serviceName == "") serviceName = "Implem.Pleasanter";
-        var dbmsName = options.DbmsName ?? Environment.GetEnvironmentVariable("INDEXCREATOR_DBMS") ?? rds.Get("Dbms").Text();
+        var dbmsName = new[] { options.DbmsName, Environment.GetEnvironmentVariable("INDEXCREATOR_DBMS"), rds.Get("Dbms").Text() }.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
         if (!Enum.TryParse<Dbms>(dbmsName, false, out var dbms) || !Enum.IsDefined(dbms)) throw new UserError("Dbms must be SQLServer, PostgreSQL or MySQL. Use -p to locate Pleasanter or --dbms for offline planning.");
         var envName = service.Get("EnvironmentName").Text();
         var connection = new[] {
@@ -78,7 +78,7 @@ public sealed record Configuration(Dbms Dbms, string Schema, string ConnectionSt
         }.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "";
         connection = connection.Replace("#ServiceName#", serviceName, StringComparison.Ordinal);
         if (options.SitesFile == null && connection == "") throw new UserError("No owner connection string is available. Configure Rds.json or INDEXCREATOR_CONNECTION_STRING.");
-        var schema = options.Schema ?? Environment.GetEnvironmentVariable("INDEXCREATOR_SCHEMA") ?? (dbms == Dbms.SQLServer ? "dbo" : serviceName);
+        var schema = new[] { options.Schema, Environment.GetEnvironmentVariable("INDEXCREATOR_SCHEMA"), dbms == Dbms.SQLServer ? "dbo" : serviceName }.First(x => !string.IsNullOrWhiteSpace(x));
         if (string.IsNullOrWhiteSpace(schema) || schema.Length > 128 || schema.Any(char.IsControl)) throw new UserError("Invalid schema name.");
         var timeout = rds.Get("SqlCommandTimeOut").ValueKind == JsonValueKind.Number ? rds.Get("SqlCommandTimeOut").GetInt32() : 0;
         if (timeout < 0) throw new UserError("SqlCommandTimeOut must not be negative.");

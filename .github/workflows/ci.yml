@@ -62,3 +62,24 @@ jobs:
       - name: 検証コンテナの終了
         if: always()
         run: docker compose --profile '*' down -v
+  appservice-layout:
+    name: App Service 配置（${{ matrix.os }}）
+    needs: build-test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v8
+        with:
+          name: IndexCreator
+          path: artifacts/package
+      - shell: pwsh
+        run: ./scripts/appservice-smoke.ps1

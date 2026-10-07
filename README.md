@@ -51,6 +51,7 @@ dotnet IndexCreator.dll _rds --prune /y
 - [導入手順](_documents/導入手順.md): Runtime・配置・接続設定
 - [利用ガイド](_documents/利用ガイド.md): コマンド・オプション・対応範囲
 - [運用手順](_documents/運用手順.md): サイト変更・CodeDefiner 後・失敗時の対応
+- [App Service 配置](_documents/AppService導入手順.md): 既存 App Service での実行
 - [開発者向けガイド](_documents/開発ガイド.md): ソースの変更・検証
 - [資料の案内](_documents/README.md): 利用者と開発者それぞれの入口
 
