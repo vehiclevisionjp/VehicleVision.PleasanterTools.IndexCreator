@@ -66,8 +66,8 @@ Check(Reconciler.Plan([spec], [existing with { Name = "standard" }], false, true
 var slash = Options.Parse(["_rds", "/p", "/opt/pleasanter app/Implem.Pleasanter", "/y"]);
 Check(slash.Action == "apply" && slash.Path == "/opt/pleasanter app/Implem.Pleasanter" && slash.Yes, "CodeDefiner slash options and absolute path");
 Check(Options.Parse(["_rds", "/c", "/f"]).Action == "plan", "Check always prevents apply");
-Reject(() => Options.Parse(["_rds", "/p", "app", "-p", "other"]), "Duplicate path aliases");
-Reject(() => Options.Parse(["_rds", "/y", "-y"]), "Duplicate yes aliases");
+Reject(() => Options.Parse(["_rds", "/p", "app", "/p", "other"]), "Duplicate path option");
+Reject(() => Options.Parse(["_rds", "/y", "/y"]), "Duplicate yes option");
 Reject(() => Json.ReadSites("""[{"SiteId":1,"ReferenceType":"Results","RecordCount":1,"SiteSettings":{"Views":"broken"}}]"""), "Malformed collection fails closed");
 var layout = Path.Combine(Path.GetTempPath(), "vvic-layout", "IndexCreator", "nested", "bin");
 Check(Configuration.ResolvePath(null, layout) == Path.Combine(Path.GetTempPath(), "vvic-layout", "Implem.Pleasanter"), "Default sibling path independent of working directory");
@@ -87,9 +87,22 @@ try
     Check(config.Schema == "ExampleService" && config.DisableIndexChangeDetection, "Service schema and safety setting");
 }
 finally { Directory.Delete(configRoot, true); }
-Reject(() => Options.Parse(["apply", "--sites", "sites.json"]), "Offline apply refused");
-Reject(() => Options.Parse(["plan", "--mysql-prefix", "0"]), "Invalid prefix");
-Reject(() => Options.Parse(["plan", "--unknown"]), "Unknown option");
+Reject(() => Options.Parse(["apply", "/sites", "sites.json"]), "Offline apply refused");
+Reject(() => Options.Parse(["plan", "/mysql-prefix", "0"]), "Invalid prefix");
+Reject(() => Options.Parse(["plan", "/unknown"]), "Unknown option");
+Reject(() => Options.Parse(["plan", "--min-records", "5"]), "The former -- options are not accepted");
+Reject(() => Options.Parse(["_rds", "-y"]), "The former -y is not accepted");
+Check(Options.Parse(["plan", "/output", "/tmp/plan.sql"]).Output == "/tmp/plan.sql", "Path options take a value that starts with a slash");
+Reject(() => Options.Parse(["plan", "/min-records", "/y"]), "A non-path option does not swallow the next option");
+Check(Options.Parse(["views"]).ColumnNames == "label" && Options.Parse(["_views", "/names", "column"]).ColumnNames == "column", "Column names default to display names");
+Reject(() => Options.Parse(["views", "/names", "physical"]), "Unknown column name mode");
+Reject(() => Options.Parse(["plan", "/names", "column"]), "Column name mode is limited to views");
+Reject(() => Options.Parse(["choice-lists", "/names", "column"]), "Choice view columns are fixed");
+var physical = new ViewPlanner(Dbms.SQLServer).Generate([SiteWith("""{"GridColumns":["ResultId","TitleBody","ClassA"],"Columns":[{"ColumnName":"ClassA","LabelText":"分類"},{"ColumnName":"TitleBody","LabelText":"件名"}]}""")]).Single();
+var physicalColumns = new ViewPlanner(Dbms.SQLServer, null, true).Generate([SiteWith("""{"GridColumns":["ResultId","TitleBody","ClassA"],"Columns":[{"ColumnName":"ClassA","LabelText":"分類"},{"ColumnName":"TitleBody","LabelText":"件名"}]}""")]).Single();
+Check(physical.Columns.Select(c => c.Alias).SequenceEqual(["ResultId", "件名", "分類"]), "Display names are the default column names");
+Check(physicalColumns.Columns.Select(c => c.Alias).SequenceEqual(["ResultId", "TitleBody", "ClassA"]) && physicalColumns.Columns[1].Source == "Title", "Column name mode uses ColumnName and keeps the Items title");
+Reject(() => new ViewPlanner(Dbms.SQLServer, null, true).Generate([SiteWith("""{"GridColumns":["ClassA","ClassA"]}""")]), "A column listed twice stops in column name mode");
 try { Json.ReadSites("""[{"SiteId":1,"ReferenceType":"Results","RecordCount":1,"SiteSettings":"broken"}]"""); throw new Exception("Invalid settings accepted"); }
 catch (System.Text.Json.JsonException) { passed++; }
 var viewSettings = """{"GridColumns":["ClassA","Title","ResultId"],"Columns":[{"ColumnName":"ClassA","GridLabelText":"分類見出し","LabelText":"分類"},{"ColumnName":"Title","LabelText":"タイトル"}]}""";
@@ -104,7 +117,7 @@ Check(System.Text.Encoding.UTF8.GetByteCount((siteView with { SiteName = new str
 Check(new ViewPlanner(Dbms.MySQL).Generate([SiteWith(viewSettings)]).Single().Name == siteView.Name, "View name independent of DBMS");
 Reject(() => new ViewPlanner(Dbms.SQLServer).Generate([SiteWith("""{"GridColumns":["ClassA~2,Title"]}""")]), "Joined grid cannot be silently omitted");
 Reject(() => new ViewPlanner(Dbms.SQLServer).Generate([SiteWith("{}")]), "Missing defaults fail closed");
-Reject(() => Options.Parse(["_views", "--sites", "sites.json"]), "Offline view apply refused");
+Reject(() => Options.Parse(["_views", "/sites", "sites.json"]), "Offline view apply refused");
 Check(Options.Parse(["_views", "/c"]).Action == "views", "Views check prevents mutation");
 Check(RuntimeLog.FileName(new DateTime(2026, 10, 7, 12, 34, 56)) == "VehicleVision.PleasanterTools.IndexCreator_20261007_123456.log", "CodeDefiner log naming convention");
 Check(Plan(Dbms.SQLServer, "{}").Indexes.Single().Keys[^1].Column == "ResultId", "Result identifier mapping");
@@ -126,8 +139,8 @@ Check(Options.Parse(["_choice-lists", "/c"]).Action == "views-choices", "Choice 
 Check(!new SqlDialect(Dbms.MySQL, "s").ChoiceSelect(1, "ClassA").Contains('\\'), "MySQL choice view does not depend on backslash escaping");
 var onlineCreate = new SqlDialect(Dbms.SQLServer, "dbo").Create(new IndexSpec("Results", [new("SiteId"), new("ClassA")]));
 Check(onlineCreate.Contains("WAIT_AT_LOW_PRIORITY", StringComparison.Ordinal) && onlineCreate.Split("CREATE INDEX").Length == onlineCreate.Split("ONLINE = ON").Length, "SQL Server online creation never silently falls back to offline");
-Check(Options.Parse(["_rds", "--lock-timeout", "3"]).LockTimeout == 3 && Options.Parse(["_rds"]).LockTimeout == 5, "Lock wait limit option");
-Reject(() => Options.Parse(["_rds", "--lock-timeout", "0"]), "Unlimited lock waits are refused");
+Check(Options.Parse(["_rds", "/lock-timeout", "3"]).LockTimeout == 3 && Options.Parse(["_rds"]).LockTimeout == 5, "Lock wait limit option");
+Reject(() => Options.Parse(["_rds", "/lock-timeout", "0"]), "Unlimited lock waits are refused");
 var tree = """
     [{"SiteId":1,"ReferenceType":"Sites","ParentId":0,"RecordCount":0,"SiteSettings":{}},
      {"SiteId":2,"ReferenceType":"Sites","ParentId":1,"RecordCount":0,"SiteSettings":{}},
@@ -135,18 +148,18 @@ var tree = """
      {"SiteId":4,"ReferenceType":"Results","ParentId":0,"RecordCount":0,"SiteSettings":{}},
      {"SiteId":5,"ReferenceType":"Issues","ParentId":1,"RecordCount":0,"SiteSettings":{}}]
     """;
-IReadOnlyList<long> Remaining(params string[] args) => Options.Parse(["views", "--sites", "s.json", .. args]).Exclusion!.Apply(Json.ReadSites(tree), Json.ReadSiteParents(tree)).Select(s => s.SiteId).ToArray();
-Check(Remaining("--exclude-tree", "2").SequenceEqual([4L, 5L]), "Folder exclusion removes the whole branch");
-Check(Remaining("--exclude-tree", "1").SequenceEqual([4L]), "Nested folders are excluded with their parent");
-Check(Remaining("--exclude-site", "3,5").SequenceEqual([4L]), "Single site exclusion keeps siblings");
-Check(Remaining("--exclude-site", "1").SequenceEqual([3L, 4L, 5L]), "Single folder exclusion does not cascade");
-Check(Remaining("--exclude-tree", "2", "--exclude-site", "4").SequenceEqual([5L]), "Both exclusion modes combine");
-Reject(() => Remaining("--exclude-tree", "99"), "Unknown excluded SiteId stops instead of being ignored");
+IReadOnlyList<long> Remaining(params string[] args) => Options.Parse(["views", "/sites", "s.json", .. args]).Exclusion!.Apply(Json.ReadSites(tree), Json.ReadSiteParents(tree)).Select(s => s.SiteId).ToArray();
+Check(Remaining("/exclude-tree", "2").SequenceEqual([4L, 5L]), "Folder exclusion removes the whole branch");
+Check(Remaining("/exclude-tree", "1").SequenceEqual([4L]), "Nested folders are excluded with their parent");
+Check(Remaining("/exclude-site", "3,5").SequenceEqual([4L]), "Single site exclusion keeps siblings");
+Check(Remaining("/exclude-site", "1").SequenceEqual([3L, 4L, 5L]), "Single folder exclusion does not cascade");
+Check(Remaining("/exclude-tree", "2", "/exclude-site", "4").SequenceEqual([5L]), "Both exclusion modes combine");
+Reject(() => Remaining("/exclude-tree", "99"), "Unknown excluded SiteId stops instead of being ignored");
 var flat = """[{"SiteId":8,"ReferenceType":"Results","RecordCount":0,"SiteSettings":{}},{"SiteId":9,"ReferenceType":"Results","RecordCount":0,"SiteSettings":{}}]""";
-Check(Options.Parse(["views", "--sites", "s.json", "--exclude-tree", "8"]).Exclusion!.Apply(Json.ReadSites(flat), Json.ReadSiteParents(flat)).Single().SiteId == 9, "Sites without ParentId are treated as top level");
-Reject(() => Options.Parse(["plan", "--exclude-site", "3"]), "Exclusions are limited to views");
-Reject(() => Options.Parse(["views", "--exclude-site", "3,3"]), "Duplicate excluded SiteId");
-Check(Options.Parse(["_choice-lists", "--exclude-tree", "1, 2"]).Exclusion!.Trees.SetEquals([1L, 2L]), "Choice lists accept exclusions");
+Check(Options.Parse(["views", "/sites", "s.json", "/exclude-tree", "8"]).Exclusion!.Apply(Json.ReadSites(flat), Json.ReadSiteParents(flat)).Single().SiteId == 9, "Sites without ParentId are treated as top level");
+Reject(() => Options.Parse(["plan", "/exclude-site", "3"]), "Exclusions are limited to views");
+Reject(() => Options.Parse(["views", "/exclude-site", "3,3"]), "Duplicate excluded SiteId");
+Check(Options.Parse(["_choice-lists", "/exclude-tree", "1, 2"]).Exclusion!.Trees.SetEquals([1L, 2L]), "Choice lists accept exclusions");
 Reject(() => new ChoicePlanner().Generate([SiteWith("""{"Columns":[{"ColumnName":"ClassA","ChoicesText":"[[123]]"}]}""")]), "Dynamic choices cannot silently become static values");
 var wikiMaster = new Site(30, "Wikis", Json.Parse("{}"), 0, "Master");
 Site Linked(string choices, string links) => new(31, "Results", Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { Columns = new object[] { new { ColumnName = "ClassA", ChoicesText = choices } }, Links = System.Text.Json.JsonSerializer.Deserialize<object>(links) })), 0, "Linked");
@@ -279,6 +292,17 @@ if (args.Contains("--integration"))
     var wikiView = new ViewPlanner(dbms).Generate([SiteWith("""{"GridColumns":["WikiId","Title"]}""", table: "Wikis") with { SiteId = 3, Title = "Wiki" }]).Single();
     await database.ApplyViews([wikiView], false, default);
     Check((await database.ReadViewNames(default)).Contains(wikiView.Name), "Live Wiki view creation");
+    // 列名モード column: 表示名ではなく物理名（ColumnName）の列名で View を作る。
+    var columnNameView = new ViewPlanner(dbms, null, true).Generate([SiteWith("""{"GridColumns":["ResultId","TitleBody","ClassA"],"Columns":[{"ColumnName":"ClassA","LabelText":"分類"}]}""") with { Title = "列名モード" }]).Single();
+    await database.ApplyViews([columnNameView], false, default);
+    await using (System.Data.Common.DbConnection nameQuery = dbms switch { Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(cs), Dbms.PostgreSQL => new Npgsql.NpgsqlConnection(cs), _ => new MySqlConnector.MySqlConnection(cs) })
+    {
+        await nameQuery.OpenAsync();
+        await using var nameCommand = nameQuery.CreateCommand();
+        nameCommand.CommandText = "SELECT * FROM " + d.Table(columnNameView.Name);
+        await using var nameRows = await nameCommand.ExecuteReaderAsync();
+        Check(nameRows.GetName(0) == "ResultId" && nameRows.GetName(1) == "TitleBody" && nameRows.GetName(2) == "ClassA" && await nameRows.ReadAsync() && nameRows.GetString(1) == "Display Title", "Live view in column name mode");
+    }
     await database.ApplyViews([choiceView], false, default, choices: true);
     await database.ApplyViews([choiceView], false, default, choices: true);
     await database.ApplyViews(multipleChoices, false, default, choices: true);

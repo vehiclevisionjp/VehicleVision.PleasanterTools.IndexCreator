@@ -50,7 +50,8 @@ public sealed record SiteView(long SiteId, string Table, IReadOnlyList<ViewColum
         return specs;
     }
 }
-public sealed class ViewPlanner(Dbms dbms, string? applicationPath = null)
+// physicalNames: 列名を表示名（LabelText）ではなく列名（ColumnName）にする。
+public sealed class ViewPlanner(Dbms dbms, string? applicationPath = null, bool physicalNames = false)
 {
     private readonly Dictionary<string, IReadOnlyList<JsonElement>> definitionCache = new(StringComparer.Ordinal);
     private static bool PhysicalColumn(string name, string table) => name switch
@@ -89,9 +90,10 @@ public sealed class ViewPlanner(Dbms dbms, string? applicationPath = null)
             {
                 if (!PhysicalColumn(name, s.ReferenceType)) throw new UserError("A grid column needs a joined or computed expression. Site view generation stopped; no columns were silently omitted.");
                 var c = s.SiteSettings.Get("Columns").Array().FirstOrDefault(c => c.Get("ColumnName").Text() == name);
-                var label = new[] { c.Get("GridLabelText").Text(), c.Get("LabelText").Text(), definitions.FirstOrDefault(d => d.Get("ColumnName").Text() == name).Get("LabelText").Text(), name }.First(x => !string.IsNullOrWhiteSpace(x));
+                var label = physicalNames ? name : new[] { c.Get("GridLabelText").Text(), c.Get("LabelText").Text(), definitions.FirstOrDefault(d => d.Get("ColumnName").Text() == name).Get("LabelText").Text(), name }.First(x => !string.IsNullOrWhiteSpace(x));
                 if (!aliases.Add(label))
                 {
+                    if (physicalNames) throw new UserError("A grid column is listed more than once. Site view generation stopped.");
                     label += " (" + name + ")";
                     if (!aliases.Add(label)) throw new UserError("Duplicate site view column labels.");
                 }
