@@ -10,7 +10,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
     private enum Kind { Unknown, Text, Class, Number, Date, Bool }
     private static Kind ColumnKind(string name) => name switch
     {
-        "SiteId" or "ResultId" or "IssueId" or "Status" or "Manager" or "Owner" or "Creator" or "Updator" or "Ver" or "WorkValue" or "ProgressRate" or "RemainingWorkValue" => Kind.Number,
+        "SiteId" or "ResultId" or "IssueId" or "WikiId" or "Status" or "Manager" or "Owner" or "Creator" or "Updator" or "Ver" or "WorkValue" or "ProgressRate" or "RemainingWorkValue" => Kind.Number,
         "CreatedTime" or "UpdatedTime" or "StartTime" or "CompletionTime" => Kind.Date,
         "Locked" => Kind.Bool,
         _ when Regex.IsMatch(name, "^Class([A-Z]|[0-9]{3})$") => Kind.Class,
@@ -30,7 +30,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
         if (dbms == Dbms.SQLServer && list.Any(k => ColumnKind(k.Column) == Kind.Class))
             Note(s, "Class keys may exceed the SQL Server 1700-byte limit. Review maximum value lengths before applying.");
     }
-    private IEnumerable<Key> Tie(Site s) => [new("UpdatedTime", true), new(s.ReferenceType == "Results" ? "ResultId" : "IssueId", true)];
+    private IEnumerable<Key> Tie(Site s) => [new("UpdatedTime", true), new(s.ReferenceType[..^1] + "Id", true)];
     private static JsonElement Setting(Site s, string name) => s.SiteSettings.Get("Columns").Array().FirstOrDefault(c => c.Get("ColumnName").Text() == name);
     private static bool Choices(JsonElement c) => !string.IsNullOrWhiteSpace(c.Get("ChoicesText").Text()) && c.Get("ControlType").Text() is "" or "ChoicesText";
     private static HashSet<string> Links(Site s)
@@ -122,7 +122,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
             foreach (var p in view.Get("ColumnSorterHash").Props())
             {
                 var kind = ColumnKind(p.Name);
-                var wrapped = kind is Kind.Class or Kind.Bool || kind == Kind.Number && p.Name is not ("SiteId" or "ResultId" or "IssueId" or "Creator" or "Updator" or "Ver") && !(p.Name == "Status" && s.ReferenceType == "Issues") && !Setting(s, p.Name).Get("Nullable").Bool();
+                var wrapped = kind is Kind.Class or Kind.Bool || kind == Kind.Number && p.Name is not ("SiteId" or "ResultId" or "IssueId" or "WikiId" or "Creator" or "Updator" or "Ver") && !(p.Name == "Status" && s.ReferenceType == "Issues") && !Setting(s, p.Name).Get("Nullable").Bool();
                 if (links.Contains(p.Name) || kind is Kind.Text or Kind.Unknown || wrapped || p.Name.Contains('~'))
                 {
                     Note(s, "A sort needs an expression or joined key; automatic creation is not supported in v0.1. Enable Nullable for numeric columns where appropriate.");

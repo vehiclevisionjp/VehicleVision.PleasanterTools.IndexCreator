@@ -97,7 +97,7 @@ public static class Json
         foreach (var row in root.EnumerateArray())
         {
             var table = row.Get("ReferenceType").Text();
-            if (table is not ("Results" or "Issues")) continue;
+            if (table is not ("Results" or "Issues" or "Wikis")) continue;
             if (!row.Get("SiteId").TryGetInt64(out var id) || id <= 0 || !row.Get("RecordCount").TryGetInt64(out var count) || count < 0)
                 throw new UserError("Each site requires a positive SiteId and a non-negative RecordCount.");
             var settings = row.Get("SiteSettings").Object();

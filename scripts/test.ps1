@@ -1,4 +1,4 @@
-param([ValidateSet('SQLServer','PostgreSQL','MySQL')][string]$Dbms)
+param([ValidateSet('SQLServer','PostgreSQL','MySQL')][string]$Dbms, [switch]$Benchmark)
 $ErrorActionPreference = 'Stop'
 dotnet run --project tests/IndexCreator.Tests -c Release --no-restore
 if ($LASTEXITCODE -ne 0) { throw 'Unit checks failed.' }
@@ -19,7 +19,9 @@ try {
         'PostgreSQL' { 'Host=localhost;Port=55432;Database=IndexCreatorTest;Username=indexcreator;Password=IndexCreator_test_only_123' }
         'MySQL' { 'Server=localhost;Port=53306;Database=IndexCreatorTest;User ID=root;Password=IndexCreator_test_only_123' }
     }
-    dotnet run --project tests/IndexCreator.Tests -c Release --no-restore -- --integration
+    $arguments = @('--integration')
+    if ($Benchmark) { $arguments += '--benchmark' }
+    dotnet run --project tests/IndexCreator.Tests -c Release --no-restore -- @arguments
     if ($LASTEXITCODE -ne 0) { throw 'Integration checks failed.' }
 } finally {
     $env:INDEXCREATOR_TEST_DBMS = $previousDbms

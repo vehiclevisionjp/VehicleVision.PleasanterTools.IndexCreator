@@ -6,14 +6,16 @@ using System.Text.RegularExpressions;
 namespace VehicleVision.PleasanterTools.IndexCreator;
 
 public sealed record ViewColumn(string Source, string Alias);
-public sealed record SiteView(long SiteId, string Table, IReadOnlyList<ViewColumn> Columns, string SiteName = "")
+public sealed record ChoiceRow(string Value, string Text, string TextMini);
+public sealed record SiteView(long SiteId, string Table, IReadOnlyList<ViewColumn> Columns, string SiteName = "", IReadOnlyList<ChoiceRow>? Choices = null, string? ChoiceColumn = null)
 {
     public const string Prefix = "View_vvplic_";
     public string Name
     {
         get
         {
-            var prefix = Prefix + Table + "_" + SiteId.ToString(CultureInfo.InvariantCulture) + "_";
+            var prefix = Prefix + (Choices != null ? "ChoiceList_" : "") + Table + "_" + SiteId.ToString(CultureInfo.InvariantCulture) + "_" + (Choices != null ? ChoiceColumn + "_" : "");
+            if (Encoding.UTF8.GetByteCount(prefix) >= 63) throw new UserError("Choice column identifiers leave no room for a portable view name.");
             var suffix = Regex.Replace(SiteName.Normalize(NormalizationForm.FormC), @"[^\p{L}\p{N}_-]+", "_", RegexOptions.CultureInvariant).Trim('_');
             if (suffix == "") suffix = "Untitled";
             var result = new StringBuilder(prefix);
@@ -28,17 +30,23 @@ public sealed record SiteView(long SiteId, string Table, IReadOnlyList<ViewColum
     }
     public string ConsoleName => JsonSerializer.Serialize(Name);
     public static string ConsoleIdentifier(string name) => JsonSerializer.Serialize(name);
-    public static bool IsManaged(string name) => Regex.IsMatch(name, "^" + Prefix + @"(Results|Issues|Wikis)_[1-9][0-9]{0,18}_[\p{L}\p{N}_-]+$", RegexOptions.CultureInvariant) && Encoding.UTF8.GetByteCount(name) <= 63;
+    public static bool IsManaged(string name, bool choices = false) => Regex.IsMatch(name, "^" + Prefix + (choices ? "ChoiceList_" : "") + @"(Results|Issues|Wikis)_[1-9][0-9]{0,18}_[\p{L}\p{N}_-]+$", RegexOptions.CultureInvariant) && Encoding.UTF8.GetByteCount(name) <= 63;
     public string Select(SqlDialect d)
     {
+        if (Choices != null)
+        {
+            string Row(ChoiceRow c) => $"SELECT {d.TextLiteral(c.Value)} AS {d.Quote("Value")}, {d.TextLiteral(c.Text)} AS {d.Quote("Text")}, {d.TextLiteral(c.TextMini)} AS {d.Quote("TextMini")}";
+            return Choices.Count == 0 ? Row(new("", "", "")) + " WHERE 1=0" : string.Join(" UNION ALL ", Choices.Select(Row));
+        }
         var expressions = Columns.Select(c => (c.Source == "Title" ? "i." : "r.") + d.Quote(c.Source) + " AS " + d.Quote(c.Alias));
-        var id = Table == "Results" ? "ResultId" : "IssueId";
+        var id = Table[..^1] + "Id";
         var join = Columns.Any(c => c.Source == "Title") ? $" INNER JOIN {d.Table("Items")} i ON i.{d.Quote("ReferenceId")}=r.{d.Quote(id)} AND i.{d.Quote("SiteId")}=r.{d.Quote("SiteId")}" : "";
         return $"SELECT {string.Join(", ", expressions)} FROM {d.Table(Table)} r{join} WHERE r.{d.Quote("SiteId")}={SiteId.ToString(CultureInfo.InvariantCulture)}";
     }
     public IReadOnlyList<IndexSpec> RequiredColumns()
     {
-        var id = Table == "Results" ? "ResultId" : "IssueId";
+        if (Choices != null) return [];
+        var id = Table[..^1] + "Id";
         var specs = new List<IndexSpec> { new(Table, Columns.Where(c => c.Source != "Title").Select(c => new Key(c.Source)).Concat([new("SiteId"), new(id)]).ToArray()) };
         if (Columns.Any(c => c.Source == "Title")) specs.Add(new("Items", [new("ReferenceId"), new("SiteId"), new("Title")]));
         return specs;
@@ -49,8 +57,9 @@ public sealed class ViewPlanner(Dbms dbms, string? applicationPath = null)
     private readonly Dictionary<string, IReadOnlyList<JsonElement>> definitionCache = new(StringComparer.Ordinal);
     private static bool PhysicalColumn(string name, string table) => name switch
     {
-        "SiteId" or "Title" or "Body" or "Comments" or "Ver" or "Status" or "Manager" or "Owner" or "Creator" or "Updator" or "CreatedTime" or "UpdatedTime" or "Locked" => true,
+        "SiteId" or "Title" or "TitleBody" or "Body" or "Comments" or "Ver" or "Status" or "Manager" or "Owner" or "Creator" or "Updator" or "CreatedTime" or "UpdatedTime" or "Locked" => true,
         "ResultId" => table == "Results",
+        "WikiId" => table == "Wikis",
         "IssueId" or "StartTime" or "CompletionTime" or "WorkValue" or "ProgressRate" or "RemainingWorkValue" => table == "Issues",
         _ => Regex.IsMatch(name, "^(Class|Num|Date|Check|Description|Attachments)([A-Z]|[0-9]{3})$", RegexOptions.CultureInvariant)
     };
@@ -60,7 +69,9 @@ public sealed class ViewPlanner(Dbms dbms, string? applicationPath = null)
         if (applicationPath == null) return [];
         var path = Path.Combine(applicationPath, "App_Data", "Definitions", "Definition_Column");
         if (!Directory.Exists(path)) return [];
-        return definitionCache[table] = Directory.EnumerateFiles(path, "*.json").Select(p => Json.Parse(File.ReadAllText(p))).Where(c => c.Get("TableName").Text() == table).ToArray();
+        var all = Directory.EnumerateFiles(path, "*.json").Select(p => Json.Parse(File.ReadAllText(p))).ToArray();
+        var own = all.Where(c => c.Get("TableName").Text() == table && c.Get("Base").Text() != "1").ToArray();
+        return definitionCache[table] = own.Concat(all.Where(c => c.Get("Base").Text() == "1" && !own.Any(o => o.Get("ColumnName").Text() == c.Get("ColumnName").Text()))).ToArray();
     }
     public IReadOnlyList<SiteView> Generate(IReadOnlyList<Site> sites)
     {
@@ -68,7 +79,7 @@ public sealed class ViewPlanner(Dbms dbms, string? applicationPath = null)
         foreach (var s in sites.OrderBy(s => s.SiteId))
         {
             Json.ValidateSettings(s.SiteSettings);
-            if (s.SiteId <= 0 || s.ReferenceType is not ("Results" or "Issues")) throw new UserError("Invalid site for view generation.");
+            if (s.SiteId <= 0 || s.ReferenceType is not ("Results" or "Issues" or "Wikis")) throw new UserError("Invalid site for view generation.");
             var definitions = Definitions(s.ReferenceType);
             var grid = s.SiteSettings.Get("GridColumns");
             var names = grid.ValueKind == JsonValueKind.Array ? grid.Array().Select(c => c.Text()).ToArray() : definitions.Where(c => c.Get("GridEnabled").Text() == "1").OrderBy(c => long.TryParse(c.Get("GridColumn").Text(), out var n) ? n : long.MaxValue).Select(c => c.Get("ColumnName").Text()).ToArray();
@@ -87,7 +98,7 @@ public sealed class ViewPlanner(Dbms dbms, string? applicationPath = null)
                 }
                 var length = dbms == Dbms.PostgreSQL ? Encoding.UTF8.GetByteCount(label) : label.Length;
                 if (label.Any(char.IsControl) || length > (dbms == Dbms.PostgreSQL ? 63 : dbms == Dbms.MySQL ? 64 : 128)) throw new UserError("A view column label exceeds the database identifier limit.");
-                columns.Add(new(name, label));
+                columns.Add(new(name == "TitleBody" ? "Title" : name, label));
             }
             views.Add(new(s.SiteId, s.ReferenceType, columns, s.Title));
         }
@@ -105,7 +116,7 @@ public sealed partial class Database
         return names;
     }
     public string ViewSql(SiteView view) => (config.Dbms == Dbms.SQLServer ? "CREATE OR ALTER VIEW " : "CREATE OR REPLACE VIEW ") + dialect.Table(view.Name) + " AS " + view.Select(dialect) + ";";
-    public async Task ApplyViews(IReadOnlyList<SiteView> views, bool prune, CancellationToken ct, IReadOnlyList<Site>? expectedSites = null, bool force = false)
+    public async Task ApplyViews(IReadOnlyList<SiteView> views, bool prune, CancellationToken ct, IReadOnlyList<Site>? expectedSites = null, bool force = false, bool choices = false)
     {
         async Task VerifySnapshot()
         {
@@ -144,7 +155,7 @@ public sealed partial class Database
         }
         await VerifySnapshot();
         if (prune)
-            foreach (var name in existing.Where(n => SiteView.IsManaged(n) && !views.Any(v => v.Name == n)))
+            foreach (var name in existing.Where(n => SiteView.IsManaged(n, choices) && !views.Any(v => v.Name == n)))
             {
                 await Execute("DROP VIEW " + dialect.Table(name) + ";", ct);
                 RuntimeLog.WriteLine("Dropped view " + SiteView.ConsoleIdentifier(name));

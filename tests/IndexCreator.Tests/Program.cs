@@ -105,6 +105,20 @@ Reject(() => new ViewPlanner(Dbms.SQLServer).Generate([SiteWith("{}")]), "Missin
 Reject(() => Options.Parse(["_views", "--sites", "sites.json"]), "Offline view apply refused");
 Check(Options.Parse(["_views", "/c"]).Action == "views", "Views check prevents mutation");
 Check(RuntimeLog.FileName(new DateTime(2026, 10, 7, 12, 34, 56)) == "VehicleVision.PleasanterTools.IndexCreator_20261007_123456.log", "CodeDefiner log naming convention");
+Check(Plan(Dbms.SQLServer, "{}").Indexes.Single().Keys[^1].Column == "ResultId", "Result identifier mapping");
+Check(new Planner(Dbms.SQLServer).Analyze([SiteWith("{}", table: "Wikis")]).Indexes.Single().Keys[^1].Column == "WikiId", "Wiki identifier mapping");
+Check(Json.ReadSites("""[{"SiteId":3,"ReferenceType":"Wikis","RecordCount":1,"SiteSettings":{}}]""").Count == 1, "Wiki sites accepted");
+var choiceSite = SiteWith("""{"Columns":[{"ColumnName":"ClassA","ChoicesText":"100,受付\n200,完了\n100,duplicate\n300\\,x,引用'名称"}]}""") with { Title = "選択肢" };
+var choiceView = new ChoicePlanner().Generate([choiceSite]).Single();
+Check(choiceView.Choices!.Count == 3 && choiceView.Choices[1].Text == "完了", "Choice labels and duplicate values");
+Check(choiceView.Choices![2].Value == "300,x", "Escaped choice comma");
+Check(choiceView.Columns.Select(c => c.Alias).SequenceEqual(["Value", "Text", "TextMini"]), "Choice view has exactly three fixed columns");
+var multipleChoices = new ChoicePlanner().Generate([SiteWith("""{"Columns":[{"ColumnName":"ClassA","ChoicesText":"1,表示,短縮"},{"ColumnName":"ClassB","ChoicesText":"1,別表示"}]}""")]);
+Check(multipleChoices.Count == 2 && multipleChoices.Select(v => v.Name).Distinct().Count() == 2, "Multiple choice columns create distinct views in one site");
+Check(multipleChoices[0].Choices![0].TextMini == "短縮" && multipleChoices[1].Choices![0].TextMini == "別表示", "Short label and fallback");
+Check(SiteView.IsManaged(choiceView.Name, true) && !SiteView.IsManaged(choiceView.Name), "Separate choice ownership scope");
+Check(Options.Parse(["_choice-lists", "/c"]).Action == "views-choices", "Choice check prevents writes");
+Reject(() => new ChoicePlanner().Generate([SiteWith("""{"Columns":[{"ColumnName":"ClassA","ChoicesText":"[[123]]"}]}""")]), "Dynamic choices cannot silently become static values");
 Console.WriteLine($"Unit checks passed: {passed}");
 
 if (args.Contains("--integration"))
@@ -123,16 +137,21 @@ if (args.Contains("--integration"))
     if (dbms == Dbms.PostgreSQL) await database.Execute($"CREATE SCHEMA IF NOT EXISTS {d.Quote(schema)}");
     var str = dbms == Dbms.SQLServer ? "nvarchar(max)" : "text";
     var classType = dbms switch { Dbms.SQLServer => "nvarchar(1024)", Dbms.PostgreSQL => "varchar(1024)", _ => "text" };
-    foreach (var table in new[] { "Results", "Issues" })
-        await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table == "Results" ? "ResultId" : "IssueId")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("Status")} int)".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
+    foreach (var table in new[] { "Results", "Issues", "Wikis" })
+        await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("Status")} int)".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
     await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str}, {d.Quote("Title")} {str})");
     await database.Execute($"CREATE TABLE {d.Table("Items")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceId")} bigint NOT NULL, {d.Quote("Title")} {str})");
-    await database.Execute($"INSERT INTO {d.Table("Items")} VALUES (1,1,'Display Title')");
-    foreach (var table in new[] { "Results", "Issues" })
+    if (dbms == Dbms.MySQL)
     {
-        await database.Execute($"INSERT INTO {d.Table(table)} ({d.Quote("SiteId")},{d.Quote(table == "Results" ? "ResultId" : "IssueId")},{d.Quote("UpdatedTime")},{d.Quote("ClassA")},{d.Quote("Status")}) VALUES ({(table == "Results" ? 1 : 2)},1,'2026-01-01','123',100)");
-        await database.Execute($"INSERT INTO {d.Table("Sites")} VALUES ({(table == "Results" ? 1 : 2)},'{table}', '{{\"Columns\":[{{\"ColumnName\":\"ClassA\",\"ChoicesText\":\"A\"}}],\"Views\":[{{\"ColumnFilterHash\":{{\"ClassA\":\"A\"}}}}]}}', 'Test site')");
-        await database.Execute($"CREATE INDEX {d.Quote("standard_" + table)} ON {d.Table(table)} ({d.Quote(table == "Results" ? "ResultId" : "IssueId")})");
+        await database.Execute($"CREATE FULLTEXT INDEX {d.Quote("fulltext_Items")} ON {d.Table("Items")} ({d.Quote("Title")})");
+        Check((await database.ReadIndexes(default)).Any(i => i.Name == "fulltext_Items" && !i.Plain), "Fulltext catalog null collation does not break planning");
+    }
+    await database.Execute($"INSERT INTO {d.Table("Items")} VALUES (1,1,'Display Title')");
+    foreach (var table in new[] { "Results", "Issues", "Wikis" })
+    {
+        await database.Execute($"INSERT INTO {d.Table(table)} ({d.Quote("SiteId")},{d.Quote(table[..^1] + "Id")},{d.Quote("UpdatedTime")},{d.Quote("ClassA")},{d.Quote("Status")}) VALUES ({(table == "Results" ? 1 : table == "Issues" ? 2 : 3)},1,'2026-01-01','123',100)");
+        await database.Execute($"INSERT INTO {d.Table("Sites")} VALUES ({(table == "Results" ? 1 : table == "Issues" ? 2 : 3)},'{table}', '{{\"Columns\":[{{\"ColumnName\":\"ClassA\",\"ChoicesText\":\"A\"}}],\"Views\":[{{\"ColumnFilterHash\":{{\"ClassA\":\"A\"}}}}]}}', 'Test site')");
+        await database.Execute($"CREATE INDEX {d.Quote("standard_" + table)} ON {d.Table(table)} ({d.Quote(table[..^1] + "Id")})");
     }
     await database.AcquireLock(default);
     await using (var second = new Database(configuration))
@@ -143,7 +162,7 @@ if (args.Contains("--integration"))
     }
     var sites = await database.ReadSites(default);
     var desired = new Planner(dbms, 0).Analyze(sites).Indexes;
-    Check(sites.Count == 2 && sites.All(s => s.RecordCount == 1), "Live site counts");
+    Check(sites.Count == 3 && sites.All(s => s.RecordCount == 1), "Live site counts");
     await database.ValidateColumns(desired, default);
     var first = Reconciler.Plan(desired, await database.ReadIndexes(default), true);
     await database.Apply(first, default);
@@ -163,7 +182,7 @@ if (args.Contains("--integration"))
     var updated = new Planner(dbms, 0).Analyze([SiteWith("""{"Views":[{"Incomplete":true}]}""", 1)]).Indexes;
     await database.Apply(Reconciler.Plan(updated, await database.ReadIndexes(default), true), default);
     var final = await database.ReadIndexes(default);
-    Check(final.Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 2, "Live standard indexes preserved");
+    Check(final.Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 3, "Live standard indexes preserved");
     Check(final.Where(i => i.Managed).All(i => updated.Any(s => s.Name == i.Name)), "Live obsolete indexes removed");
     foreach (var i in final.Where(i => i.Managed)) await database.Execute(d.Drop(i.Table, i.Name));
     await database.Apply(Reconciler.Plan(updated, await database.ReadIndexes(default), false), default);
@@ -205,9 +224,29 @@ if (args.Contains("--integration"))
         await database.ApplyViews([liveView], false, default, force: true);
     }
     await database.Execute((dbms == Dbms.SQLServer ? "CREATE VIEW " : "CREATE OR REPLACE VIEW ") + d.Table("standard_site_view") + " AS " + liveView.Select(d));
+    var wikiView = new ViewPlanner(dbms).Generate([SiteWith("""{"GridColumns":["WikiId","Title"]}""", table: "Wikis") with { SiteId = 3, Title = "Wiki" }]).Single();
+    await database.ApplyViews([wikiView], false, default);
+    Check((await database.ReadViewNames(default)).Contains(wikiView.Name), "Live Wiki view creation");
+    await database.ApplyViews([choiceView], false, default, choices: true);
+    await database.ApplyViews([choiceView], false, default, choices: true);
+    await database.ApplyViews(multipleChoices, false, default, choices: true);
+    var choiceNames = await database.ReadViewNames(default);
+    Check(multipleChoices.All(v => choiceNames.Contains(v.Name)), "Live multiple choice columns coexist in one site");
+    await using (System.Data.Common.DbConnection query = dbms switch { Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(cs), Dbms.PostgreSQL => new Npgsql.NpgsqlConnection(cs), _ => new MySqlConnector.MySqlConnection(cs) })
+    {
+        await query.OpenAsync();
+        await using var command = query.CreateCommand();
+        command.CommandText = "SELECT * FROM " + d.Table(choiceView.Name) + " ORDER BY " + d.Quote("Value");
+        await using var rows = await command.ExecuteReaderAsync();
+        Check(await rows.ReadAsync() && rows.GetString(0) == "100" && rows.GetString(1) == "受付" && rows.GetString(2) == "受付", "Live fixed choice value and Unicode label");
+    }
     await database.ApplyViews([], true, default);
     Check((await database.ReadViewNames(default)).Contains("standard_site_view") && !(await database.ReadViewNames(default)).Contains(liveView.Name), "Only managed views pruned");
+    Check((await database.ReadViewNames(default)).Contains(choiceView.Name), "Grid view prune preserves choice views");
+    await database.ApplyViews([], true, default, choices: true);
+    Check(!(await database.ReadViewNames(default)).Contains(choiceView.Name), "Choice prune removes only choice views");
     await database.Execute("DROP VIEW " + d.Table("standard_site_view"));
-    foreach (var table in new[] { "Sites", "Items", "Results", "Issues" }) await database.Execute($"DROP TABLE {d.Table(table)}");
+    if (args.Contains("--benchmark")) await Benchmark.Run(configuration, database, d);
+    foreach (var table in new[] { "Sites", "Items", "Results", "Issues", "Wikis" }) await database.Execute($"DROP TABLE {d.Table(table)}");
     Console.WriteLine($"Integration checks passed ({dbms}). Total checks: {passed}");
 }

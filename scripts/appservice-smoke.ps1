@@ -43,6 +43,7 @@ try {
         Invoke-Checked -Arguments @('_rds','/p',$pleasanter,'/c','--sites',$sites) -ExpectedText 'Desired indexes: 2'
         Invoke-Checked -Arguments @('_rds','-p',$pleasanter,'/c','--sites',$sites) -ExpectedText 'Desired indexes: 2'
         Invoke-Checked -Arguments @('views','/p',$pleasanter,'--sites',$sites) -ExpectedText 'View_vvplic_Results_'
+        Invoke-Checked -Arguments @('choice-lists','/p',$pleasanter,'--sites',$sites) -ExpectedText 'View_vvplic_ChoiceList_Results_100_ClassB_'
         $env:INDEXCREATOR_DBMS = 'PostgreSQL'
         Invoke-Checked -Arguments @('plan','--sites',$sites) -ExpectedText 'Desired indexes: 1'
         $env:INDEXCREATOR_DBMS = 'SQLServer'

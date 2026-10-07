@@ -1,19 +1,19 @@
 # サイト一覧の SQL View
 
-Results / Issues の各サイトに、一覧の表示列と項目名を反映した SQL View を作ります。インデックスの操作とは別のコマンドです。件数の下限に関係なく対象サイトの View を生成します。
+Results / Issues / Wikis の各サイトに、一覧の表示列と項目名を反映した SQL View を作ります。インデックスの操作とは別のコマンドです。件数の下限に関係なく対象サイトの View を生成します。
 
 ```powershell
 dotnet IndexCreator.dll views /p "C:\web\pleasanter\Implem.Pleasanter"
 dotnet IndexCreator.dll _views /p "C:\web\pleasanter\Implem.Pleasanter" /y
 ```
 
-`views` は計画のみ、`_views` / `views-apply` は適用です。`/c` は確認のみ、`/y` は入力の省略です。接続設定はインデックス操作と共通です。適用には対象スキーマでの View 作成・変更権限が必要です。
+`views` は計画のみ、`_views` / `views-apply` は適用です。`/c` は確認のみ、`/y` は入力の省略です。接続設定はインデックス操作と共通です。適用には対象スキーマでの View 作成・変更権限が必要です。MySQL の本体 owner 接続に標準で付く権限には CREATE VIEW / SHOW VIEW が含まれないため、DB 管理者が追加するか、必要な権限を持つ接続を INDEXCREATOR_CONNECTION_STRING に指定してください。
 
 ## 名前と表示列
 
-名前は `View_vvplic_{ReferenceType}_{SiteId}_{SiteName}`。ReferenceType は Results / Issues / Wikis の参照種別です。現版の自動生成対象は Results / Issues で、Wikis は命名規則を予約しています。例えば `View_vvplic_Results_100_案件一覧` です。サイト名は Sites.Title から取得します。記号や空白は `_` にまとめ、空の名前は `Untitled` とします。3 DB 共通で UTF-8 の 63 バイト以内になるようサイト名部分を短縮します。コンソールには日本語を Unicode エスケープで表示します。
+名前は `View_vvplic_{ReferenceType}_{SiteId}_{SiteName}`。ReferenceType は Results / Issues / Wikis の参照種別です。例えば `View_vvplic_Results_100_案件一覧` です。サイト名は Sites.Title から取得します。記号や空白は `_` にまとめ、空の名前は `Untitled` とします。3 DB 共通で UTF-8 の 63 バイト以内になるようサイト名部分を短縮します。コンソールには日本語を Unicode エスケープで表示します。
 
-GridColumns の順序で列を作り、GridLabelText、LabelText、本体の列定義、物理列名の順で列名を決めます。同じ列名には物理列名を付記します。GridColumns が省略されている場合は `/p` の本体にある列定義から既定の一覧列を読みます。Title は Items のタイトルを取得します。
+GridColumns の順序で列を作り、GridLabelText、LabelText、本体の列定義、物理列名の順で列名を決めます。同じ列名には物理列名を付記します。GridColumns が省略されている場合は `/p` の本体にある列定義から既定の一覧列を読みます。Title は Items のタイトルを取得します。TitleBody も SQL View ではタイトルを返します。
 
 値は DB の格納値です。分類の表示ラベル、ユーザーの表示名、リンク先の表示値、添付表示、書式、保存ビューの絞り込み・並べ替えは再現しません。リンク先項目や計算項目の列がある場合は、列を省略せず生成を停止します。取得順序が必要な場合は SELECT に ORDER BY を指定してください。
 

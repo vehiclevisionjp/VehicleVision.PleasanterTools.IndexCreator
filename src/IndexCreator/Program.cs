@@ -23,6 +23,8 @@ public static class Program
                     Usage: IndexCreator <plan|apply|_rds> [/p <Pleasanter folder>] [/y]
                       views                       Plan per-site SQL views; use --output
                       _views                      Create or update per-site SQL views
+                      choice-lists                Plan fixed choice master views
+                      _choice-lists               Create or update choice master views
                       /p, -p <folder>             Pleasanter application folder (not Parameters)
                       /c, --check                 Inspect only; never modify the database
                       /f, --force                 Rebuild indexes or changed PostgreSQL view columns
@@ -106,15 +108,16 @@ public static class Program
         if (database != null)
         {
             await database.Open(ct);
-            if (options.Action == "views-apply") await database.AcquireLock(ct);
+            if (options.Action.EndsWith("-apply", StringComparison.Ordinal)) await database.AcquireLock(ct);
             sites = await database.ReadSites(ct);
             existing = await database.ReadViewNames(ct);
         }
         else sites = Json.ReadSites(await File.ReadAllTextAsync(options.SitesFile!, ct));
-        var views = new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path)).Generate(sites);
+        var choices = options.Action.Contains("choices", StringComparison.Ordinal);
+        var views = choices ? new ChoicePlanner(options.Path).Generate(sites) : new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path)).Generate(sites);
         if (database != null) await database.ValidateColumns(views.SelectMany(v => v.RequiredColumns()).ToArray(), ct);
         var dialect = new SqlDialect(config.Dbms, config.Schema);
-        var drops = options.Prune ? existing.Where(SiteView.IsManaged).Where(n => !views.Any(v => v.Name == n)).ToArray() : [];
+        var drops = options.Prune ? existing.Where(n => SiteView.IsManaged(n, choices)).Where(n => !views.Any(v => v.Name == n)).ToArray() : [];
         foreach (var view in views) RuntimeLog.WriteLine($"{(existing.Contains(view.Name) ? "Update" : "Create"),-7} VIEW {view.ConsoleName} Columns: {view.Columns.Count}");
         foreach (var name in drops) RuntimeLog.WriteLine("Drop    VIEW " + SiteView.ConsoleIdentifier(name));
         RuntimeLog.WriteLine("INFO: SQL views expose database values. UI permissions, formatting, saved-view filters and row ordering are not reproduced.");
@@ -131,14 +134,14 @@ public static class Program
             await File.WriteAllTextAsync(options.Output, string.Join(Environment.NewLine, statements), ct);
             RuntimeLog.WriteLine("SQL view plan exported.");
         }
-        if (options.Action == "views") return 0;
+        if (!options.Action.EndsWith("-apply", StringComparison.Ordinal)) return 0;
         if (!options.Yes)
         {
             if (Console.IsInputRedirected) throw new UserError("Non-interactive view apply requires /y.");
             RuntimeLog.Write("Apply the listed view changes? Type yes: ");
             if (Console.ReadLine() != "yes") { RuntimeLog.WriteLine("Cancelled. No views were applied."); return 2; }
         }
-        await database!.ApplyViews(views, options.Prune, ct, sites, options.Force);
+        await database!.ApplyViews(views, options.Prune, ct, sites, options.Force, choices);
         RuntimeLog.WriteLine("Site views completed.");
         return 0;
     }
