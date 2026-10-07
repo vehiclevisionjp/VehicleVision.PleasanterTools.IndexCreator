@@ -58,7 +58,7 @@ jobs:
         with:
           global-json-file: global.json
       - run: dotnet restore --locked-mode
-      - run: pwsh -File scripts/test.ps1 -Dbms ${{ matrix.dbms }}
+      - run: pwsh -File scripts/test.ps1 -Dbms ${{ matrix.dbms }} -Benchmark
       - name: 検証コンテナの終了
         if: always()
         run: docker compose --profile '*' down -v

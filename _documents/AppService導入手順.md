@@ -35,7 +35,3 @@ App Service の「接続文字列」欄で指定した値には SQLCONNSTR_ な�
 サイト編集と CodeDefiner を終了し、`plan --prune` で確認した後に `_rds --prune /y` を実行します。複数インスタンスやスロットから同じ DB に実行してもセッションロックで IndexCreator 同士の多重実行を防ぎます。CodeDefiner やサイト編集との同時実行は避けてください。
 
 本体を再配置する際に IndexCreator フォルダも保持・再配置してください。テーブルが作り直された場合は、IndexCreator の再実行で不足した管理索引を補います。詳しくは [運用手順](運用手順.md) を参照してください。
-
-## 確認した範囲
-
-Windows と Linux で配布 ZIP を使い、App Service に似た配置・環境変数・別フォルダからの起動をローカル検証しました。実際の Azure App Service、Azure SQL、マネージド ID、スロット、プラットフォームの実行制限を含む検証は未実施です。

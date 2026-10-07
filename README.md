@@ -53,14 +53,17 @@ dotnet IndexCreator.dll _views /y
 
 対応範囲と変更時の扱いは [サイト View ガイド](_documents/サイトViewガイド.md) を参照してください。
 
+固定選択肢のマスタ View も `choice-lists` / `_choice-lists` で生成できます。[選択肢 View ガイド](_documents/選択肢Viewガイド.md) を参照してください。
+
 ## 現在の対応範囲
 
-保存ビューの通常のフィルタ・関数を伴わない並べ替え、リンク項目、サマリを解析する初期版です。SQL Server 2025 Developer・PostgreSQL 15・MySQL 8.4 の専用 DB で作成・再実行・更新を確認しました。本体 UI を含む E2E と実運用での性能測定は未実施です。式索引などの未対応条件とキーサイズの制約は [利用ガイド](_documents/利用ガイド.md) を参照してください。
+Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を伴わない並べ替え、リンク項目、サマリを解析する初期版です。式索引などの未対応条件とキーサイズの制約は [利用ガイド](_documents/利用ガイド.md) を参照してください。
 
 ## 資料
 
 - [導入手順](_documents/導入手順.md): Runtime・配置・接続設定
 - [利用ガイド](_documents/利用ガイド.md): コマンド・オプション・対応範囲
+- [生成ルール](_documents/生成ルール.md): 名前・ハッシュ・列の生成方法
 - [運用手順](_documents/運用手順.md): サイト変更・CodeDefiner 後・失敗時の対応
 - [App Service 配置](_documents/AppService導入手順.md): 既存 App Service での実行
 - [開発者向けガイド](_documents/開発ガイド.md): ソースの変更・検証

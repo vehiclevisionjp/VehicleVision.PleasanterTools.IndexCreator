@@ -10,6 +10,7 @@ public sealed class SqlDialect(Dbms dbms, string schema, bool offline = false)
     };
     public string Table(string name) => Quote(schema) + "." + Quote(name);
     public static string Literal(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+    public string TextLiteral(string value) => (dbms == Dbms.SQLServer ? "N" : "") + Literal(value);
     public string Create(IndexSpec spec)
     {
         var keys = string.Join(", ", spec.Keys.Select(k => Quote(k.Column) + (k.Prefix > 0 ? $"({k.Prefix})" : "") + (k.Pattern ? " varchar_pattern_ops" : "") + (k.Desc ? " DESC" : " ASC")));

@@ -1,18 +1,39 @@
-[
-  {
-    "SiteId": 100,
-    "Title": "案件",
-    "ReferenceType": "Results",
-    "RecordCount": 20000,
-    "SiteSettings": {
-      "GridColumns": ["ResultId", "ClassA", "NumA", "UpdatedTime"],
-      "Columns": [
-        { "ColumnName": "ClassA", "ChoicesText": "New\nClosed" },
-        { "ColumnName": "NumA", "Nullable": true }
-      ],
-      "Views": [
-        { "Id": 1, "ColumnFilterHash": { "ClassA": "[\"New\"]" }, "ColumnSorterHash": { "NumA": "desc" } }
-      ]
-    }
+{
+  "SiteId": 100,
+  "Title": "案件",
+  "ReferenceType": "Results",
+  "RecordCount": 20000,
+  "SiteSettings": {
+    "GridColumns": [
+      "ResultId",
+      "ClassA",
+      "NumA",
+      "UpdatedTime"
+    ],
+    "Columns": [
+      {
+        "ColumnName": "ClassA",
+        "ChoicesText": "New\nClosed"
+      },
+      {
+        "ColumnName": "NumA",
+        "Nullable": true
+      },
+      {
+        "ColumnName": "ClassB",
+        "ChoicesText": "100,高,高\n200,低,低"
+      }
+    ],
+    "Views": [
+      {
+        "Id": 1,
+        "ColumnFilterHash": {
+          "ClassA": "[\"New\"]"
+        },
+        "ColumnSorterHash": {
+          "NumA": "desc"
+        }
+      }
+    ]
   }
-]
+}

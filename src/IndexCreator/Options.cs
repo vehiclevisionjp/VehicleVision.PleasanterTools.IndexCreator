@@ -8,8 +8,8 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
     public static Options Parse(string[] args)
     {
         if (args.Length == 0 || args[0] is "--help" or "-h" or "help") return new("help", null, null, null, null, 10000, 100, false, false, false, false, null);
-        var action = args[0] switch { "_rds" => "apply", "_views" => "views-apply", _ => args[0] };
-        if (action is not ("plan" or "apply" or "views" or "views-apply")) throw new UserError("Unknown action. Use plan, apply, views or _views.");
+        var action = args[0] switch { "_rds" => "apply", "_views" => "views-apply", "choice-lists" => "views-choices", "_choice-lists" or "choice-lists-apply" => "views-choices-apply", _ => args[0] };
+        if (action is not ("plan" or "apply" or "views" or "views-apply" or "views-choices" or "views-choices-apply")) throw new UserError("Unknown action. Use plan, apply, views or _views.");
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         var flags = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 1; i < args.Length; i++)
@@ -30,8 +30,8 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
         }
         var prefix = (int)Number("--mysql-prefix", 100, 191);
         if (prefix < 1) throw new UserError("MySQL prefix must be between 1 and 191.");
-        if (flags.Contains("--check")) action = action.StartsWith("views", StringComparison.Ordinal) ? "views" : "plan";
-        if (action is "apply" or "views-apply" && V("--sites") != null) throw new UserError("Apply requires a live database; --sites is only available for planning.");
+        if (flags.Contains("--check")) action = action.Contains("choices", StringComparison.Ordinal) ? "views-choices" : action.StartsWith("views", StringComparison.Ordinal) ? "views" : "plan";
+        if (action is "apply" or "views-apply" or "views-choices-apply" && V("--sites") != null) throw new UserError("Apply requires a live database; --sites is only available for planning.");
         if (V("--sites") != null && flags.Contains("--prune")) throw new UserError("Prune requires a live database inventory.");
         return new(action, V("-p"), V("--sites"), V("--dbms"), V("--schema"), Number("--min-records", 10000, long.MaxValue), prefix, flags.Contains("--include-filter-columns"), flags.Contains("--offline"), flags.Contains("--prune"), flags.Contains("--yes"), V("--output"), flags.Contains("--force"));
     }
@@ -48,9 +48,9 @@ public sealed record Configuration(Dbms Dbms, string Schema, string ConnectionSt
         if (index >= 0) return System.IO.Path.GetFullPath(System.IO.Path.Combine(string.Join(System.IO.Path.DirectorySeparatorChar, parts.Take(index)), "Implem.Pleasanter"));
         return System.IO.Path.GetFullPath(System.IO.Path.Combine(directory.FullName, "..", "Implem.Pleasanter"));
     }
-    public static Configuration Load(Options options)
+    public static string ParameterPath(string? applicationPath)
     {
-        var path = ResolvePath(options.Path);
+        var path = ResolvePath(applicationPath);
         var parameterPath = System.IO.Path.Combine(path, "App_Data", "Parameters");
         var envFile = System.IO.Path.Combine(parameterPath, "Env.json");
         if (File.Exists(envFile))
@@ -58,6 +58,11 @@ public sealed record Configuration(Dbms Dbms, string Schema, string ConnectionSt
             var env = Json.Parse(File.ReadAllText(envFile));
             if (env.Get("ParametersPath").Text() != "") parameterPath = System.IO.Path.GetFullPath(env.Get("ParametersPath").Text().Replace('\\', System.IO.Path.DirectorySeparatorChar));
         }
+        return parameterPath;
+    }
+    public static Configuration Load(Options options)
+    {
+        var parameterPath = ParameterPath(options.Path);
         var rdsFile = System.IO.Path.Combine(parameterPath, "Rds.json");
         var rds = File.Exists(rdsFile) ? Json.Parse(File.ReadAllText(rdsFile)) : default;
         var serviceFile = System.IO.Path.Combine(parameterPath, "Service.json");
