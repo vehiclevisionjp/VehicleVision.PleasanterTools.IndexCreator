@@ -249,6 +249,11 @@ if (args.Contains("--integration"))
         command.CommandText = "SELECT " + d.Quote("Value") + ", " + d.Quote("Text") + " FROM " + d.Table(slashView.Name);
         await using var slashRows = await command.ExecuteReaderAsync();
         Check(await slashRows.ReadAsync() && slashRows.GetString(0) == "x\\" && slashRows.GetString(1) == "a\\' b", "Live backslash choice value is preserved");
+        await slashRows.CloseAsync();
+        var manyView = new SiteView(10, "Results", slashView.Columns, "Many", Enumerable.Range(1, 5000).Select(n => new ChoiceRow(n.ToString(), "表示" + n, "短" + n)).ToArray(), "ClassA");
+        await database.ApplyViews([manyView], false, default, choices: true);
+        command.CommandText = "SELECT COUNT(*) FROM " + d.Table(manyView.Name);
+        Check(Convert.ToInt64(await command.ExecuteScalarAsync()) == 5000, "Live view holds thousands of fixed choices");
     }
     await database.ApplyViews([], true, default);
     Check((await database.ReadViewNames(default)).Contains("standard_site_view") && !(await database.ReadViewNames(default)).Contains(liveView.Name), "Only managed views pruned");
