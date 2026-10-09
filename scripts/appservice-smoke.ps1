@@ -1,4 +1,4 @@
-param([ValidateSet('win-x64','linux-x64')][string]$Rid = $(if ($IsWindows) { 'win-x64' } else { 'linux-x64' }), [string]$PackageDirectory = 'artifacts/package')
+param([ValidateSet('win-x86','win-x64','linux-x64')][string]$Rid = $(if ($IsWindows) { 'win-x64' } else { 'linux-x64' }), [string]$PackageDirectory = 'artifacts/package', [string]$DotnetPath = 'dotnet')
 $ErrorActionPreference = 'Stop'
 $repoPath = (Get-Location).Path
 $zipPath = Join-Path $repoPath (Join-Path $PackageDirectory "IndexCreator-$Rid.zip")
@@ -21,7 +21,7 @@ foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVari
 $count = 0
 function Invoke-Checked([string[]]$Arguments, [int]$ExpectedExit = 0, [string]$ExpectedText) {
     # stderr も文字列として捕捉し、文字コードに依存する非 ASCII の出力がないことを確認する。
-    $lines = & dotnet $app @Arguments 2>&1
+    $lines = & $DotnetPath $app @Arguments 2>&1
     $code = $LASTEXITCODE
     $text = $lines -join "`n"
     if ($code -ne $ExpectedExit) { throw "Unexpected CLI exit code: $code. $text" }
@@ -39,6 +39,7 @@ try {
     $env:PLEASANTER_OwnerConnectionString = ''
     Push-Location $outside
     try {
+        Invoke-Checked -Arguments @('help') -ExpectedText 'Usage: IndexCreator'
         Invoke-Checked -Arguments @('plan','/sites',$sites) -ExpectedText 'Desired indexes: 2'
         Invoke-Checked -Arguments @('_rds','/p',$pleasanter,'/c','/sites',$sites) -ExpectedText 'Desired indexes: 2'
         Invoke-Checked -Arguments @('views','/p',$pleasanter,'/sites',$sites,'/names','column') -ExpectedText 'View_vvplic_Results_'
