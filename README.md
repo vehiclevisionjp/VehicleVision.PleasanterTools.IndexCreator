@@ -4,7 +4,7 @@ Pleasanter のサイト構成から必要なインデックスを計画・作成
 
 ## 配置する
 
-配布版は [v0.1.1](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/releases/tag/v0.1.1) です。Release の Assets から OS と `dotnet` ホストのアーキテクチャに合う ZIP と SHA256 を取得してください。Windows 版 Azure Kudu で実行する場合は、v0.1.1 で追加した x86 版を使ってください。
+配布版は [v0.2.0](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/releases/tag/v0.2.0) です。Release の Assets から OS と `dotnet` ホストのアーキテクチャに合う ZIP と SHA256 を取得してください。Windows 版 Azure Kudu で実行する場合は、v0.1.1 で追加した x86 版を使ってください。
 
 .NET Runtime 10 を用意し、配布 ZIP の `IndexCreator` フォルダを `Implem.Pleasanter`・`Implem.CodeDefiner` と同じ階層へ置きます。
 
