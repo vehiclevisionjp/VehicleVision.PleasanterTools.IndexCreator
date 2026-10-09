@@ -4,6 +4,10 @@
 
 ## 配置とパス
 
+**Azure App Service の Windows 版 Kudu で `dotnet IndexCreator.dll` を実行するときは、x86 版（`IndexCreator-win-x86.zip`）を使ってください。** Windows が 64bit でも、Kudu の `dotnet` ホストが x86 の場合は x86 版が必要です。
+
+配置前に `dotnet --info` の Host Architecture を確認してください。明示的に x64 の `dotnet` ホストを使う環境では、win-x64 版を選びます。win-x64 の DLL を x86 の `dotnet` で実行すると、アーキテクチャ不一致で起動できません。v0.1.0 には win-x86 の配布物がないため、x86 版を含む配布物を使用してください。
+
 本体が `wwwroot/Implem.Pleasanter` にあり、CodeDefiner が兄弟の `wwwroot/Implem.CodeDefiner` にある場合は、配布フォルダを `wwwroot/IndexCreator` に置きます。通常の配置と同じで、`/p` は省略できます。
 
 本体の DLL と App_Data が wwwroot 直下にある場合は、その本体フォルダを `/p` で指定します。CodeDefiner と同じ階層へ配置した IndexCreator の実際のパスから実行してください。例えば IndexCreator を wwwroot 配下へ置いた Windows 環境では、管理用コンソールで次を実行します。

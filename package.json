@@ -1,7 +1,7 @@
 {
   "name": "pleasanter-indexcreator-development",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "AGPL-3.0-or-later",
   "engines": { "node": ">=24" },
   "scripts": { "lint:md": "node scripts/markdownlint.mjs" },
