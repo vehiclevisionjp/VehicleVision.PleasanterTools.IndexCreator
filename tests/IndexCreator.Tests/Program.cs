@@ -31,6 +31,25 @@ var partial = Plan(Dbms.PostgreSQL, """{"Columns":[{"ColumnName":"ClassA","Searc
 Check(!partial.Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")) && partial.Diagnostics.Any(d => d.Message.Contains("search type to exact match", StringComparison.Ordinal)), "Partial-match choice filter explains how to enable an index");
 var range = Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterHash":{"DateA":"[\"2026-01-01,2026-12-31\"]"},"ColumnSorterHash":{"CreatedTime":"desc"}}]}""");
 Check(range.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "DateA"]), "Range stops sort coverage");
+var ownSettings = """{"Views":[{"Own":true}]}""";
+var ownIndexes = Plan(Dbms.PostgreSQL, ownSettings).Indexes;
+Check(ownIndexes.Count == 2 && ownIndexes.Any(i => i.Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Manager", "UpdatedTime", "ResultId"])) && ownIndexes.Any(i => i.Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Owner", "UpdatedTime", "ResultId"])), "Own OR uses separate equality branches, not Manager/Owner composite");
+Check(!Plan(Dbms.PostgreSQL, """{"UseNegativeFilters":true,"Views":[{"Own":true,"ColumnFilterNegatives":["ViewFilters_Own"]}]}""").Indexes.Any(), "Negative Own is excluded");
+Check(Plan(Dbms.PostgreSQL, """{"Views":[{"Own":true,"ColumnFilterNegatives":["ViewFilters_Own"]}]}""").Indexes.Count == 2, "Inactive negative-filter setting does not negate Own");
+Check(Plan(Dbms.PostgreSQL, """{"Views":[{"Own":true,"ColumnSorterHash":{"NumA":"desc"}}]}""").Indexes.All(i => i.Keys.Count == 2), "Own equality survives unsupported sort without claiming sort coverage");
+Analysis IssuePlan(string settings) => new Planner(Dbms.PostgreSQL, 0).Analyze([SiteWith(settings) with { ReferenceType = "Issues" }]);
+var nearIndexes = IssuePlan("""{"Views":[{"NearCompletionTime":true}]}""").Indexes;
+Check(nearIndexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "CompletionTime"]), "Near deadline uses CompletionTime range");
+var overdueIndexes = IssuePlan("""{"Views":[{"Overdue":true}]}""").Indexes;
+Check(overdueIndexes.Count == 2 && overdueIndexes.Select(i => i.Keys[1].Column).ToHashSet().SetEquals(["CompletionTime", "Status"]), "Overdue exposes both range access paths");
+Check(IssuePlan("""{"Views":[{"Own":true,"Overdue":true}]}""").Indexes.Count == 4, "Own and overdue combine each OR branch with each range");
+Check(!IssuePlan("""{"UseNegativeFilters":true,"Views":[{"NearCompletionTime":true,"Overdue":true,"Incomplete":true,"ColumnFilterNegatives":["ViewFilters_NearCompletionTime","ViewFilters_Overdue","ViewFilters_Incomplete"]}]}""").Indexes.Any(), "Negative deadline and incomplete flags are excluded");
+Check(!Plan(Dbms.PostgreSQL, """{"Views":[{"NearCompletionTime":true,"Overdue":true}]}""").Indexes.Any(), "Deadline columns are not invented on Results");
+var multipleRanges = """{"Views":[{"ColumnFilterHash":{"DateA":"range","DateB":"range"},"ColumnSorterHash":{"CreatedTime":"desc"}}]}""";
+var rangeIndexes = Plan(Dbms.PostgreSQL, multipleRanges).Indexes;
+Check(rangeIndexes.Count == 2 && rangeIndexes.All(i => i.Keys.Count == 2), "Each range gets an access path without claiming sort coverage");
+Check(rangeIndexes.Select(i => i.Name).SequenceEqual(Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterHash":{"DateB":"range","DateA":"range"},"ColumnSorterHash":{"CreatedTime":"desc"}}]}""").Indexes.Select(i => i.Name)), "Range candidates are independent of JSON property order");
+Check(IssuePlan("""{"Views":[{"Incomplete":true,"Overdue":true}]}""").Indexes.Count == 2, "Repeated Status range is deduplicated");
 var prefix = Plan(Dbms.PostgreSQL, """{"Columns":[{"ColumnName":"ClassA","SearchType":3}],"Views":[{"ColumnFilterHash":{"ClassA":"A"}}]}""");
 Check(prefix.Indexes.Single().Keys[1].Pattern, "PostgreSQL prefix opclass");
 Check(!Plan(Dbms.SQLServer, """{"Columns":[{"ColumnName":"ClassA","MultipleSelections":true,"ChoicesText":"A"}],"Views":[{"ColumnFilterHash":{"ClassA":"A"}}]}""").Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")), "Multiple selections excluded");
@@ -203,7 +222,7 @@ if (args.Contains("--integration"))
     var str = dbms switch { Dbms.SQLServer => "nvarchar(max)", Dbms.MySQL => "longtext", _ => "text" };
     var classType = dbms switch { Dbms.SQLServer => "nvarchar(1024)", Dbms.PostgreSQL => "varchar(1024)", _ => "text" };
     foreach (var table in new[] { "Results", "Issues", "Wikis" })
-        await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("Status")} int{(table == "Wikis" ? $", {d.Quote("Body")} {str}" : "")})".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
+        await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("Status")} int, {d.Quote("Manager")} int NOT NULL DEFAULT 0, {d.Quote("Owner")} int NOT NULL DEFAULT 0, {d.Quote("DateA")} timestamp NULL, {d.Quote("DateB")} timestamp NULL{(table == "Issues" ? $", {d.Quote("CompletionTime")} timestamp NULL" : "")}{(table == "Wikis" ? $", {d.Quote("Body")} {str}" : "")})".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
     await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str}, {d.Quote("Title")} {str}, {d.Quote("ParentId")} bigint NOT NULL DEFAULT 0)");
     await database.Execute($"CREATE TABLE {d.Table("Items")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceId")} bigint NOT NULL, {d.Quote("Title")} {str})");
     if (dbms == Dbms.MySQL)
@@ -236,6 +255,15 @@ if (args.Contains("--integration"))
     Check(Reconciler.Plan(desired, await database.ReadIndexes(default), true).All(c => c.Kind == ChangeKind.Keep), "Live repeat apply no-op");
     await database.Apply(Reconciler.Plan(desired, await database.ReadIndexes(default), false, true), default);
     Check(Reconciler.Plan(desired, await database.ReadIndexes(default), true).All(c => c.Kind == ChangeKind.Keep), "Live force rebuild");
+    var coverageSites = new[] {
+        SiteWith("""{"Views":[{"Own":true},{"ColumnFilterHash":{"DateA":"range","DateB":"range"}}]}""", 1),
+        SiteWith("""{"Views":[{"Own":true,"NearCompletionTime":true,"Overdue":true}]}""", 2) with { SiteId = 2, ReferenceType = "Issues" }
+    };
+    var coverageIndexes = new Planner(dbms, 0).Analyze(coverageSites).Indexes;
+    await database.ValidateColumns(coverageIndexes, default);
+    await database.Apply(Reconciler.Plan(coverageIndexes, await database.ReadIndexes(default), true), default);
+    Check(Reconciler.Plan(coverageIndexes, await database.ReadIndexes(default), true).All(c => c.Kind == ChangeKind.Keep), "Live Own/deadline/multiple-range indexes roundtrip and repeat");
+    Check((await database.ReadIndexes(default)).Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 3, "Coverage expansion preserves standard indexes");
     var snapshotRejected = false;
     try { await database.Apply([], default, [sites[0]]); }
     catch (UserError) { snapshotRejected = true; }

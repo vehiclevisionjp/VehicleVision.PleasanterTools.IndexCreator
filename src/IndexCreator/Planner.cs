@@ -105,7 +105,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
     private void AnalyzeView(Site s, JsonElement view, HashSet<string> links)
     {
         var equality = new List<Key>();
-        Key? range = null;
+        var ranges = new List<Key>();
         var negatives = view.Get("ColumnFilterNegatives").Array().Select(x => x.Text()).ToHashSet();
         foreach (var p in Filters(view.Get("ColumnFilterHash")))
         {
@@ -114,15 +114,41 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
             { Note(s, "A negative, joined or OR filter was excluded from index candidates."); continue; }
             var use = Filter(s, view, p.Name, p.Value);
             if (use == "eq") equality.Add(KeyFor(p.Name));
-            else if (use is "range" or "prefix" && range == null) range = KeyFor(p.Name, pattern: use == "prefix" && dbms == Dbms.PostgreSQL);
+            else if (use is "range" or "prefix") ranges.Add(KeyFor(p.Name, pattern: use == "prefix" && dbms == Dbms.PostgreSQL));
         }
-        if (view.Get("Incomplete").Bool() && range == null) range = new("Status");
-        if (view.Get("Own").Bool() || view.Get("Search").Text() != "") Note(s, "Own/full-text search conditions are not covered by ordinary index planning.");
-        var keys = new List<Key> { new("SiteId") };
-        keys.AddRange(equality.OrderBy(k => k.Column, StringComparer.Ordinal));
-        if (range != null) keys.Add(range);
-        else
+        bool Positive(string flag)
         {
+            if (!view.Get(flag).Bool()) return false;
+            if (!s.SiteSettings.Get("UseNegativeFilters").Bool() || !negatives.Contains("ViewFilters_" + flag)) return true;
+            Note(s, $"The negative {flag} filter was excluded from index candidates.");
+            return false;
+        }
+        if (Positive("Incomplete")) ranges.Add(new("Status"));
+        var near = Positive("NearCompletionTime");
+        var overdue = Positive("Overdue");
+        if (near || overdue)
+        {
+            if (s.ReferenceType == "Issues")
+            {
+                ranges.Add(new("CompletionTime"));
+                if (overdue) ranges.Add(new("Status"));
+            }
+            else Note(s, "Deadline filters require Issues columns; no deadline index was generated.");
+        }
+        if (view.Get("Search").Text() != "") Note(s, "Full-text search conditions are not covered by ordinary index planning.");
+        // Own は Manager=@user OR Owner=@user。OR を複合キー1本にせず、各分岐を等価キーとして計画する。
+        var own = Positive("Own");
+        var branches = own ? new[] { "Manager", "Owner" } : new[] { "" };
+        var distinctRanges = ranges.DistinctBy(k => k.Column).OrderBy(k => k.Column, StringComparer.Ordinal).ToArray();
+        foreach (var branch in branches)
+        {
+            var keys = new List<Key> { new("SiteId") };
+            keys.AddRange(equality.Concat(branch == "" ? [] : new[] { KeyFor(branch) }).DistinctBy(k => k.Column).OrderBy(k => k.Column, StringComparer.Ordinal));
+            if (distinctRanges.Length > 0)
+            {
+                foreach (var range in distinctRanges) Add(s, keys.Concat(new[] { range }));
+                continue;
+            }
             var sort = new List<Key>();
             var usable = true;
             foreach (var p in view.Get("ColumnSorterHash").Props())
@@ -139,8 +165,8 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
                 sort.Add(KeyFor(p.Name, direction is "1" or "desc"));
             }
             if (usable) { keys.AddRange(sort); keys.AddRange(Tie(s)); }
-            if (equality.Count == 0 && (sort.Count == 0 || !usable)) return;
+            if (equality.Count == 0 && branch == "" && (sort.Count == 0 || !usable)) continue;
+            Add(s, keys);
         }
-        Add(s, keys);
     }
 }
