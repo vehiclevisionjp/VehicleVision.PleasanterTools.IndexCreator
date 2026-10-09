@@ -1,6 +1,6 @@
 param([string]$Output = 'artifacts/package')
 $ErrorActionPreference = 'Stop'
-foreach ($rid in @('win-x64','linux-x64','linux-arm64')) {
+foreach ($rid in @('win-x86','win-x64','linux-x64','linux-arm64')) {
     $folder = Join-Path $Output "$rid/IndexCreator"
     dotnet publish src/IndexCreator/IndexCreator.csproj -c Release -r $rid --self-contained false --no-restore -o $folder
     if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }

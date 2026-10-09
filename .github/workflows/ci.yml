@@ -63,13 +63,19 @@ jobs:
         if: always()
         run: docker compose --profile '*' down -v
   appservice-layout:
-    name: App Service 配置（${{ matrix.os }}）
+    name: App Service 配置（${{ matrix.rid }}）
     needs: build-test
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            rid: win-x86
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
     steps:
       - uses: actions/checkout@v7
         with:
@@ -81,5 +87,16 @@ jobs:
         with:
           name: IndexCreator
           path: artifacts/package
+      - name: Windows x86 のランタイムを用意する
+        if: matrix.rid == 'win-x86'
+        shell: pwsh
+        run: |
+          $installerPath = Join-Path $env:RUNNER_TEMP 'dotnet-install.ps1'
+          Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile $installerPath
+          & $installerPath -Runtime dotnet -Channel 10.0 -Architecture x86 -InstallDir (Join-Path $env:RUNNER_TEMP 'dotnet-x86') -NoPath
+          if ($LASTEXITCODE -ne 0) { throw 'Windows x86 runtime installation failed.' }
       - shell: pwsh
-        run: ./scripts/appservice-smoke.ps1
+        run: |
+          $dotnetHostPath = if ('${{ matrix.rid }}' -eq 'win-x86') { Join-Path $env:RUNNER_TEMP 'dotnet-x86/dotnet.exe' } else { 'dotnet' }
+          & $dotnetHostPath --info
+          ./scripts/appservice-smoke.ps1 -Rid '${{ matrix.rid }}' -DotnetPath $dotnetHostPath
