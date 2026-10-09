@@ -57,6 +57,42 @@ Check(!Plan(Dbms.SQLServer, """{"Views":[{"ColumnSorterHash":{"NumA":"desc"}}]}"
 Check(Plan(Dbms.PostgreSQL, """{"Views":[{"Incomplete":true}]}""").Indexes.Single().Keys[1].Column == "Status", "Incomplete range");
 Check(Plan(Dbms.PostgreSQL, """{"Columns":[{"ColumnName":"ClassA","ChoicesText":"[[123]]"}]}""").Indexes.Single().Keys[1].Column == "ClassA", "Link choices");
 Check(Plan(Dbms.PostgreSQL, """{"Summaries":[{"LinkColumn":"ClassB"}]}""").Indexes.Single().Keys[1].Column == "ClassB", "Summary link");
+var linkSource = new Site(10, "Results", Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":20,"View":{"ColumnFilterHash":{"Status":"100","DateA":"range"}}}]}"""), 1);
+var linkTarget = new Site(20, "Issues", Json.Parse("{}"), 20000);
+var linkAnalysis = new Planner(Dbms.PostgreSQL).Analyze([linkSource, linkTarget]);
+Check(linkAnalysis.Indexes.Single().Table == "Issues" && linkAnalysis.Indexes.Single().SiteId == 20 && linkAnalysis.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Status", "DateA"]), "Choice filters belong to target master even when source is small");
+Check(new Planner(Dbms.PostgreSQL).Analyze([linkSource, linkTarget with { RecordCount = 1 }]).Indexes.Count == 0, "Choice master retains record threshold");
+Check(new Planner(Dbms.PostgreSQL).Analyze([linkSource]).Diagnostics.Any(d => d.Message.Contains("target site 20 is unavailable", StringComparison.Ordinal)), "Missing choice target is diagnosed");
+var equalityLink = linkSource with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":20,"View":{"ColumnFilterHash":{"Status":"100"}}}]}""") };
+Check(new Planner(Dbms.PostgreSQL).Analyze([equalityLink, linkTarget]).Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Status"]), "Choice filters do not invent UpdatedTime sort for Title order");
+var sortedLink = equalityLink with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":20,"View":{"ColumnFilterHash":{"Status":"100"},"ColumnSorterHash":{"CreatedTime":"desc"}}}]}""") };
+Check(new Planner(Dbms.PostgreSQL).Analyze([sortedLink, linkTarget]).Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Status", "CreatedTime"]), "Explicit choice sort has no unrequested tie breakers");
+Check(new Planner(Dbms.PostgreSQL).Analyze([linkSource, linkTarget with { ReferenceType = "Wikis" }]).Indexes.Count == 0, "Wiki body choices do not use table choice filters");
+var relatingSource = new Site(10, "Results", Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30},{"ColumnName":"ClassB","SiteId":20}],"RelatingColumns":[{"Columns":["ClassA","ClassB"]}]}"""), 1);
+var relatingTarget = linkTarget with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30}]}""") };
+var relatingPlan = new Planner(Dbms.PostgreSQL).Analyze([relatingSource, relatingTarget]);
+Check(relatingPlan.Indexes.Single().Table == "Issues" && relatingPlan.Indexes.Single().SiteId == 20 && relatingPlan.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "ClassA", "IssueId"]), "Relation indexes child master parent column and projected ID");
+Check(relatingPlan.Diagnostics.Any(d => d.Message.Contains("residual condition, not an indexed seek", StringComparison.Ordinal)), "Relation conversion remains explicitly unsupported as seek");
+Check(new Planner(Dbms.MySQL).Analyze([relatingSource, relatingTarget]).Diagnostics.Any(d => d.Message.Contains("does not cover the full value", StringComparison.Ordinal)), "MySQL prefix is not claimed as conversion coverage");
+var multiTarget = relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30}],"Columns":[{"ColumnName":"ClassA","MultipleSelections":true}]}""") };
+Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, multiTarget]).Indexes.All(i => i.Keys.Count == 2), "Multiple selection relation adds no record-ID covering candidate");
+Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, relatingTarget with { RecordCount = 1 }]).Diagnostics.Any(d => d.Message.Contains("below the minimum record threshold", StringComparison.Ordinal)), "Small relation master explains omission");
+Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource]).Diagnostics.Any(d => d.Message.Contains("target site 20 is unavailable", StringComparison.Ordinal)), "Unavailable relation master is diagnosed");
+var orderedTarget = relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30},{"ColumnName":"ClassB","SiteId":30}],"EditorColumnHash":{"General":["ClassB","ClassA"]}}""") };
+Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, orderedTarget]).Indexes.Any(i => i.Keys.Select(k => k.Column).SequenceEqual(["SiteId", "ClassB", "IssueId"])), "Relation uses child master editor order rather than Links order");
+var ambiguousTarget = relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30},{"ColumnName":"ClassB","SiteId":30}]}""") };
+Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, ambiguousTarget]).Diagnostics.Any(d => d.Message.Contains("editor order is unavailable", StringComparison.Ordinal)), "Missing default editor order does not guess a parent column");
+Check(!new Planner(Dbms.PostgreSQL).Analyze([relatingSource, relatingTarget with { ReferenceType = "Wikis" }]).Indexes.Any(i => i.Keys.Count == 3), "Wiki relation does not invent table selection query");
+Check(new Planner(Dbms.PostgreSQL).Analyze([relatingTarget, relatingSource]).Indexes.Select(i => i.Name).SequenceEqual(relatingPlan.Indexes.Select(i => i.Name)), "Relation names are independent of input site order");
+var deepSource = relatingSource with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30},{"ColumnName":"ClassB","SiteId":20},{"ColumnName":"ClassC","SiteId":40}],"RelatingColumns":[{"Columns":["ClassA","ClassB","ClassC"]},{"Columns":["ClassA","ClassB"]}]}""") };
+var deepTarget = new Site(40, "Results", Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":20}]}"""), 20000);
+var deepPlan = new Planner(Dbms.PostgreSQL).Analyze([deepSource, relatingTarget, deepTarget]);
+Check(deepPlan.Indexes.Count == 2 && deepPlan.Indexes.Select(i => i.Table).ToHashSet().SetEquals(["Results", "Issues"]), "Multi-level relations cover adjacent masters and deduplicate repeated edges");
+Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30}],"EditorColumnHash":{"General":null}}""") }]).Indexes.Single().Keys.Count == 3, "Null editor tab is accepted as an empty tab");
+Reject(() => Plan(Dbms.PostgreSQL, """{"RelatingColumns":[{"Columns":"ClassA"}]}"""), "Malformed relation fails closed");
+Reject(() => Plan(Dbms.PostgreSQL, """{"Links":[{"SiteId":20,"View":{"ColumnFilterHash":[]}}]}"""), "Malformed linked view fails before target lookup");
+Reject(() => Plan(Dbms.PostgreSQL, """{"EditorColumnHash":{"General":"ClassA"}}"""), "Malformed editor order fails closed");
+Check(Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterExpressions":[{"ColumnName":"ClassA"}]}]}""").Diagnostics.Any(d => d.Message.Contains("ColumnFilterExpressions", StringComparison.Ordinal)), "Expression filters report unsupported planning");
 Check(!Plan(Dbms.SQLServer, """{"Columns":[{"ColumnName":"ClassA","ChoicesText":"A"}],"Views":[{"ColumnFilterHash":{"ClassA":"A"},"ColumnFilterNegatives":["ClassA"]}]}""").Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")), "Negative filters excluded");
 Check(Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterHash":{"and_1":"{\"Status\":\"[100]\"}"}}]}""").Indexes.Single().Keys[1].Column == "Status", "Nested AND filters");
 Check(!Plan(Dbms.SQLServer, """{"Views":[{"ColumnFilterHash":{"ClassA~2,ClassB":"A"}}]}""").Indexes.Any(i => i.Keys.Any(k => k.Column.Contains('~'))), "Joined filters excluded");
@@ -222,7 +258,7 @@ if (args.Contains("--integration"))
     var str = dbms switch { Dbms.SQLServer => "nvarchar(max)", Dbms.MySQL => "longtext", _ => "text" };
     var classType = dbms switch { Dbms.SQLServer => "nvarchar(1024)", Dbms.PostgreSQL => "varchar(1024)", _ => "text" };
     foreach (var table in new[] { "Results", "Issues", "Wikis" })
-        await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("Status")} int, {d.Quote("Manager")} int NOT NULL DEFAULT 0, {d.Quote("Owner")} int NOT NULL DEFAULT 0, {d.Quote("DateA")} timestamp NULL, {d.Quote("DateB")} timestamp NULL{(table == "Issues" ? $", {d.Quote("CompletionTime")} timestamp NULL" : "")}{(table == "Wikis" ? $", {d.Quote("Body")} {str}" : "")})".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
+        await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("ClassB")} {classType}, {d.Quote("Status")} int, {d.Quote("Manager")} int NOT NULL DEFAULT 0, {d.Quote("Owner")} int NOT NULL DEFAULT 0, {d.Quote("DateA")} timestamp NULL, {d.Quote("DateB")} timestamp NULL{(table == "Issues" ? $", {d.Quote("CompletionTime")} timestamp NULL" : "")}{(table == "Wikis" ? $", {d.Quote("Body")} {str}" : "")})".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
     await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str}, {d.Quote("Title")} {str}, {d.Quote("ParentId")} bigint NOT NULL DEFAULT 0)");
     await database.Execute($"CREATE TABLE {d.Table("Items")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceId")} bigint NOT NULL, {d.Quote("Title")} {str})");
     if (dbms == Dbms.MySQL)
@@ -264,6 +300,28 @@ if (args.Contains("--integration"))
     await database.Apply(Reconciler.Plan(coverageIndexes, await database.ReadIndexes(default), true), default);
     Check(Reconciler.Plan(coverageIndexes, await database.ReadIndexes(default), true).All(c => c.Kind == ChangeKind.Keep), "Live Own/deadline/multiple-range indexes roundtrip and repeat");
     Check((await database.ReadIndexes(default)).Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 3, "Coverage expansion preserves standard indexes");
+    var masterWorkloads = new[] {
+        relatingSource with { SiteId = 1, SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":3},{"ColumnName":"ClassB","SiteId":2,"View":{"ColumnFilterHash":{"Status":"100","DateA":"range"}}}],"RelatingColumns":[{"Columns":["ClassA","ClassB"]}]}""") },
+        relatingTarget with { SiteId = 2, SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":3}]}""") }
+    };
+    var masterIndexes = new Planner(dbms, 0).Analyze(masterWorkloads).Indexes;
+    await database.ValidateColumns(masterIndexes, default);
+    await database.Apply(Reconciler.Plan(masterIndexes, await database.ReadIndexes(default), true), default);
+    Check(Reconciler.Plan(masterIndexes, await database.ReadIndexes(default), true).All(c => c.Kind == ChangeKind.Keep), "Live relation and linked-choice indexes roundtrip and repeat");
+    Check(masterIndexes.Any(i => i.Table == "Issues" && i.Keys.Select(k => k.Column).SequenceEqual(["SiteId", "ClassA", "IssueId"])), "Live relation candidate retains projected ID");
+    var converted = dbms switch {
+        Dbms.SQLServer => $"TRY_CAST({d.Quote("ClassA")} AS bigint)",
+        Dbms.PostgreSQL => $"CASE WHEN {d.Quote("ClassA")} ~ '^[0-9]+$' THEN {d.Quote("ClassA")}::bigint ELSE NULL END",
+        _ => $"CAST({d.Quote("ClassA")} AS signed)"
+    };
+    await using (System.Data.Common.DbConnection relationQuery = dbms switch { Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(cs), Dbms.PostgreSQL => new Npgsql.NpgsqlConnection(cs), _ => new MySqlConnector.MySqlConnection(cs) })
+    {
+        await relationQuery.OpenAsync();
+        await using var relationCommand = relationQuery.CreateCommand();
+        relationCommand.CommandText = $"SELECT {d.Quote("IssueId")} FROM {d.Table("Issues")} WHERE {d.Quote("SiteId")}=2 AND {converted} IN (123)";
+        Check(Convert.ToInt64(await relationCommand.ExecuteScalarAsync()) == 1, "Live relation conversion query remains valid with new raw-column index");
+    }
+    Check((await database.ReadIndexes(default)).Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 3, "Master workload expansion preserves standard indexes");
     var snapshotRejected = false;
     try { await database.Apply([], default, [sites[0]]); }
     catch (UserError) { snapshotRejected = true; }

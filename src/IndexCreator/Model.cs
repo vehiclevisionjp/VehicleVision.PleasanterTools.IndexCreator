@@ -77,17 +77,33 @@ public static class Json
     public static void ValidateSettings(JsonElement settings)
     {
         if (settings.ValueKind != JsonValueKind.Object) throw new UserError("SiteSettings must be a JSON object.");
-        foreach (var name in new[] { "Views", "Columns", "Links", "Summaries", "GridColumns", "FilterColumns" })
+        foreach (var name in new[] { "Views", "Columns", "Links", "Summaries", "GridColumns", "FilterColumns", "RelatingColumns" })
         {
             var value = settings.Get(name);
             if (value.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array)) throw new UserError("A SiteSettings collection has an invalid shape. No changes were applied.");
         }
-        foreach (var v in settings.Get("Views").Array())
+        foreach (var v in settings.Get("Views").Array()) ValidateView(v);
+        foreach (var link in settings.Get("Links").Array())
         {
-            if (v.ValueKind != JsonValueKind.Object) throw new UserError("A view must be a JSON object.");
-            foreach (var name in new[] { "ColumnFilterHash", "ColumnSorterHash", "ColumnFilterSearchTypes" })
-                if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object)) throw new UserError("A view dictionary has an invalid shape. No changes were applied.");
+            if (link.ValueKind != JsonValueKind.Object) throw new UserError("A link must be a JSON object. No changes were applied.");
+            if (link.Get("View").ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)) ValidateView(link.Get("View"));
         }
+        var editor = settings.Get("EditorColumnHash");
+        if (editor.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object)
+            || editor.Props().Any(p => p.Value.ValueKind is not (JsonValueKind.Null or JsonValueKind.Array) || p.Value.Array().Any(c => c.ValueKind != JsonValueKind.String)))
+            throw new UserError("EditorColumnHash has an invalid shape. No changes were applied.");
+        foreach (var relation in settings.Get("RelatingColumns").Array())
+            if (relation.ValueKind != JsonValueKind.Object || relation.Get("Columns").ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array)
+                || relation.Get("Columns").Array().Any(c => c.ValueKind != JsonValueKind.String))
+                throw new UserError("RelatingColumns has an invalid shape. No changes were applied.");
+    }
+    public static void ValidateView(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Object) throw new UserError("A view must be a JSON object.");
+        foreach (var name in new[] { "ColumnFilterHash", "ColumnSorterHash", "ColumnFilterSearchTypes" })
+            if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object)) throw new UserError("A view dictionary has an invalid shape. No changes were applied.");
+        foreach (var name in new[] { "ColumnFilterExpressions", "ColumnFilterNegatives" })
+            if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array)) throw new UserError("A view collection has an invalid shape. No changes were applied.");
     }
     public static IReadOnlyList<Site> ReadSites(string text)
     {
