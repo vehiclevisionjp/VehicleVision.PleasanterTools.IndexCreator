@@ -4,7 +4,7 @@
 
 ## 配置とパス
 
-**Azure App Service の Windows 版 Kudu で `dotnet IndexCreator.dll` を実行するときは、x86 版（`IndexCreator-win-x86.zip`）を使ってください。** Windows が 64bit でも、Kudu の `dotnet` ホストが x86 の場合は x86 版が必要です。
+**Azure App Service の Windows 版 Kudu で `dotnet VehicleVision.PleasanterTools.IndexCreator.dll` を実行するときは、x86 版（`VehicleVision.PleasanterTools.IndexCreator-win-x86.zip`）を使ってください。** Windows が 64bit でも、Kudu の `dotnet` ホストが x86 の場合は x86 版が必要です。
 
 配置前に `dotnet --info` の Host Architecture を確認してください。明示的に x64 の `dotnet` ホストを使う環境では、win-x64 版を選びます。win-x64 の DLL を x86 の `dotnet` で実行すると、アーキテクチャ不一致で起動できません。v0.1.0 には win-x86 の配布物がないため、x86 版を含む配布物を使用してください。
 
@@ -13,15 +13,15 @@
 本体の DLL と App_Data が wwwroot 直下にある場合は、その本体フォルダを `/p` で指定します。CodeDefiner と同じ階層へ配置した IndexCreator の実際のパスから実行してください。例えば IndexCreator を wwwroot 配下へ置いた Windows 環境では、管理用コンソールで次を実行します。
 
 ```bat
-dotnet "%HOME%\site\wwwroot\IndexCreator\IndexCreator.dll" plan /p "%HOME%\site\wwwroot"
-dotnet "%HOME%\site\wwwroot\IndexCreator\IndexCreator.dll" _rds /p "%HOME%\site\wwwroot" /y
+dotnet "%HOME%\site\wwwroot\IndexCreator\VehicleVision.PleasanterTools.IndexCreator.dll" plan /p "%HOME%\site\wwwroot"
+dotnet "%HOME%\site\wwwroot\IndexCreator\VehicleVision.PleasanterTools.IndexCreator.dll" _rds /p "%HOME%\site\wwwroot" /y
 ```
 
 Linux で本体が `/home/site/wwwroot` 直下にある場合の例です。
 
 ```bash
-dotnet /home/site/wwwroot/IndexCreator/IndexCreator.dll plan /p /home/site/wwwroot
-dotnet /home/site/wwwroot/IndexCreator/IndexCreator.dll _rds /p /home/site/wwwroot /y
+dotnet /home/site/wwwroot/IndexCreator/VehicleVision.PleasanterTools.IndexCreator.dll plan /p /home/site/wwwroot
+dotnet /home/site/wwwroot/IndexCreator/VehicleVision.PleasanterTools.IndexCreator.dll _rds /p /home/site/wwwroot /y
 ```
 
 ZIP 配置や実行パッケージの設定で wwwroot が読み取り専用の場合は、サイトと CodeDefiner を配置する運用に合わせて IndexCreator を配置し、`/p` で本体の絶対パスを指定します。IndexCreator は本体フォルダに状態やログを書き込みません。`/output` の出力先は書き込み可能な場所を指定します。

@@ -3,8 +3,8 @@
 各サイトの項目に設定された固定選択肢を、SQL から値と表示テキストの一覧として取得できます。
 
 ```powershell
-dotnet IndexCreator.dll choice-lists
-dotnet IndexCreator.dll _choice-lists /y
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll choice-lists
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll _choice-lists /y
 ```
 
 `choice-lists` は計画、`_choice-lists` は作成・更新です。`/p`、`/c`、`/y`、`/output` は一覧 View と共通です。

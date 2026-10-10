@@ -1,7 +1,7 @@
 param([ValidateSet('win-x86','win-x64','linux-x64')][string]$Rid = $(if ($IsWindows) { 'win-x64' } else { 'linux-x64' }), [string]$PackageDirectory = 'artifacts/package', [string]$DotnetPath = 'dotnet')
 $ErrorActionPreference = 'Stop'
 $repoPath = (Get-Location).Path
-$zipPath = Join-Path $repoPath (Join-Path $PackageDirectory "IndexCreator-$Rid.zip")
+$zipPath = Join-Path $repoPath (Join-Path $PackageDirectory "VehicleVision.PleasanterTools.IndexCreator-$Rid.zip")
 if (-not (Test-Path -LiteralPath $zipPath)) { throw 'Build the distribution ZIP before running App Service smoke checks.' }
 $smokeHome = Join-Path $repoPath ('temp/appservice-' + [guid]::NewGuid().ToString('N'))
 $wwwroot = Join-Path $smokeHome 'site/wwwroot'
@@ -13,7 +13,7 @@ Expand-Archive -LiteralPath $zipPath -DestinationPath $wwwroot
 Copy-Item examples/sites.json (Join-Path $smokeHome 'sites.json')
 @{ Name = 'Implem.Pleasanter'; EnvironmentName = 'PLEASANTER' } | ConvertTo-Json | Set-Content (Join-Path $parameters 'Service.json') -Encoding utf8
 @{ Dbms = 'SQLServer'; OwnerConnectionString = ''; DisableIndexChangeDetection = $true; SqlCommandTimeOut = 3 } | ConvertTo-Json | Set-Content (Join-Path $parameters 'Rds.json') -Encoding utf8
-$app = Join-Path $wwwroot 'IndexCreator/IndexCreator.dll'
+$app = Join-Path $wwwroot 'IndexCreator/VehicleVision.PleasanterTools.IndexCreator.dll'
 $sites = Join-Path $smokeHome 'sites.json'
 $names = @('WEBSITE_SITE_NAME','WEBSITE_INSTANCE_ID','DOTNET_ENVIRONMENT','INDEXCREATOR_DBMS','INDEXCREATOR_CONNECTION_STRING','PLEASANTER_OwnerConnectionString')
 $previous = @{}

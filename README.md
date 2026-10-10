@@ -13,7 +13,7 @@ pleasanter/
 ├── Implem.Pleasanter/
 ├── Implem.CodeDefiner/
 └── IndexCreator/
-    └── IndexCreator.dll
+    └── VehicleVision.PleasanterTools.IndexCreator.dll
 ```
 
 接続設定は本体の `App_Data/Parameters/Rds.json` を使います。追加索引を適用する前に **`DisableIndexChangeDetection` を `true`** にしてください。配置・接続・Runtime の詳細は [導入手順](_documents/導入手順.md) を参照してください。
@@ -23,14 +23,14 @@ pleasanter/
 `IndexCreator` フォルダで計画を確認し、適用します。
 
 ```powershell
-dotnet IndexCreator.dll plan
-dotnet IndexCreator.dll _rds
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll plan
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll _rds
 ```
 
 `_rds` は `apply` の別名で、計画表示後に `yes` の入力を求めます。CodeDefiner と同じ `/p` で本体フォルダを指定し、`/y` で入力を省略できます。
 
 ```powershell
-dotnet IndexCreator.dll _rds /p "C:\web\pleasanter\Implem.Pleasanter" /y
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll _rds /p "C:\web\pleasanter\Implem.Pleasanter" /y
 ```
 
 ## サイト構成を変えたら
@@ -38,8 +38,8 @@ dotnet IndexCreator.dll _rds /p "C:\web\pleasanter\Implem.Pleasanter" /y
 再実行で不足分を補います。不要な管理索引も整理する場合は、計画を確認してから `/prune` を付けます。
 
 ```powershell
-dotnet IndexCreator.dll plan /prune
-dotnet IndexCreator.dll _rds /prune /y
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll plan /prune
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll _rds /prune /y
 ```
 
 管理名は `IX_vvplic_{ReferenceType}_{SiteId}_{用途}_{定義ハッシュ16桁}`。同じ物理索引を複数サイトが使う場合は共有します。標準索引・他ツールの索引・列・テーブルは削除しません。新規作成と確認が成功してから古い管理索引を整理します。CodeDefiner がテーブルを作り直した後も `_rds /y` を再実行してください。
@@ -49,8 +49,8 @@ dotnet IndexCreator.dll _rds /prune /y
 表示列の順序と項目名を反映した View も作成できます。名前は `View_vvplic_{ReferenceType}_{SiteId}_{SiteName}` です。
 
 ```powershell
-dotnet IndexCreator.dll views
-dotnet IndexCreator.dll _views /y
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll views
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll _views /y
 ```
 
 対応範囲と変更時の扱いは [サイト View ガイド](_documents/サイトViewガイド.md) を参照してください。

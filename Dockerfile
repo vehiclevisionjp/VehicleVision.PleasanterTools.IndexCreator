@@ -8,4 +8,4 @@ FROM mcr.microsoft.com/dotnet/runtime:10.0
 WORKDIR /tools/IndexCreator
 COPY --from=build /app/ ./
 COPY LICENSE NOTICE ThirdPartyNotices.txt ./
-ENTRYPOINT ["dotnet", "IndexCreator.dll"]
+ENTRYPOINT ["dotnet", "VehicleVision.PleasanterTools.IndexCreator.dll"]

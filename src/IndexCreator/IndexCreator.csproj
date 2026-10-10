@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <AssemblyName>IndexCreator</AssemblyName>
+    <AssemblyName>VehicleVision.PleasanterTools.IndexCreator</AssemblyName>
     <RootNamespace>VehicleVision.PleasanterTools.IndexCreator</RootNamespace>
     <RuntimeIdentifiers>win-x86;win-x64;linux-x64;linux-arm64</RuntimeIdentifiers>
   </PropertyGroup>
