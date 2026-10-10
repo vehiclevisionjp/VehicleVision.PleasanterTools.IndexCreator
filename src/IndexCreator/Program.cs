@@ -18,8 +18,8 @@ public static class Program
             var options = Options.Parse(args);
             if (options.Action == "help")
             {
-                RuntimeLog.WriteLine("""
-                    IndexCreator 0.1.0 - Pleasanter index management
+                RuntimeLog.WriteLine($"""
+                    IndexCreator {typeof(Program).Assembly.GetName().Version!.ToString(3)} - Pleasanter index management
                     Usage: IndexCreator <action> [/p <Pleasanter folder>] [/y]
                       plan                        Plan indexes (read-only)
                       _rds                        Create or update indexes
