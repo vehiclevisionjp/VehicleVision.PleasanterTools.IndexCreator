@@ -1,8 +1,8 @@
-param([ValidateSet('win-x86','win-x64','linux-x64')][string]$Rid = $(if ($IsWindows) { 'win-x64' } else { 'linux-x64' }), [string]$PackageDirectory = 'artifacts/package', [string]$DotnetPath = 'dotnet')
+param([ValidateSet('win-x86','win-x64','linux-x64')][string]$Platform = $(if ($IsWindows) { 'win-x64' } else { 'linux-x64' }), [string]$PackageDirectory = 'artifacts/package', [string]$DotnetPath = 'dotnet')
 $ErrorActionPreference = 'Stop'
 $repoPath = (Get-Location).Path
 $version = ([xml](Get-Content (Join-Path $repoPath 'Directory.Build.props') -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
-$zipPath = Join-Path $repoPath (Join-Path $PackageDirectory "VehicleVision.PleasanterTools.IndexCreator-$version-$Rid.zip")
+$zipPath = Join-Path $repoPath (Join-Path $PackageDirectory "VehicleVision.PleasanterTools.IndexCreator-$version-portable.zip")
 if (-not (Test-Path -LiteralPath $zipPath)) { throw 'Build the distribution ZIP before running App Service smoke checks.' }
 $smokeHome = Join-Path $repoPath ('temp/appservice-' + [guid]::NewGuid().ToString('N'))
 $wwwroot = Join-Path $smokeHome 'site/wwwroot'
@@ -68,5 +68,5 @@ try {
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
 }
-Write-Output "App Service layout smoke checks passed ($Rid): $count."
+Write-Output "App Service layout smoke checks passed ($Platform): $count."
 Write-Output "Fixture retained under: $smokeHome"

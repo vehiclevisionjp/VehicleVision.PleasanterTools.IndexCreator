@@ -99,4 +99,4 @@ jobs:
         run: |
           $dotnetHostPath = if ('${{ matrix.rid }}' -eq 'win-x86') { Join-Path $env:RUNNER_TEMP 'dotnet-x86/dotnet.exe' } else { 'dotnet' }
           & $dotnetHostPath --info
-          ./scripts/appservice-smoke.ps1 -Rid '${{ matrix.rid }}' -DotnetPath $dotnetHostPath
+          ./scripts/appservice-smoke.ps1 -Platform '${{ matrix.rid }}' -DotnetPath $dotnetHostPath
