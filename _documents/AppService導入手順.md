@@ -4,7 +4,7 @@
 
 ## 配置とパス
 
-**Azure App Service の Windows 版 Kudu で `dotnet VehicleVision.PleasanterTools.IndexCreator.dll` を実行するときは、x86 版（`VehicleVision.PleasanterTools.IndexCreator-win-x86.zip`）を使ってください。** Windows が 64bit でも、Kudu の `dotnet` ホストが x86 の場合は x86 版が必要です。
+**Azure App Service の Windows 版 Kudu で `dotnet VehicleVision.PleasanterTools.IndexCreator.dll` を実行するときは、x86 版（`VehicleVision.PleasanterTools.IndexCreator-<バージョン>-win-x86.zip`）を使ってください。** Windows が 64bit でも、Kudu の `dotnet` ホストが x86 の場合は x86 版が必要です。
 
 配置前に `dotnet --info` の Host Architecture を確認してください。明示的に x64 の `dotnet` ホストを使う環境では、win-x64 版を選びます。win-x64 の DLL を x86 の `dotnet` で実行すると、アーキテクチャ不一致で起動できません。v0.1.0 には win-x86 の配布物がないため、x86 版を含む配布物を使用してください。
 
