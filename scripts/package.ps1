@@ -1,11 +1,12 @@
 param([string]$Output = 'artifacts/package')
 $ErrorActionPreference = 'Stop'
-foreach ($rid in @('win-x86','win-x64','linux-x64','linux-arm64')) {
-    $folder = Join-Path $Output "$rid/IndexCreator"
-    dotnet publish src/IndexCreator/IndexCreator.csproj -c Release -r $rid --self-contained false --no-restore -o $folder
-    if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
-    Copy-Item LICENSE, NOTICE, ThirdPartyNotices.txt -Destination $folder
-    Compress-Archive -Path $folder -DestinationPath (Join-Path $Output "IndexCreator-$rid.zip") -Force
-    $hash = Get-FileHash (Join-Path $Output "IndexCreator-$rid.zip") -Algorithm SHA256
-    "$($hash.Hash.ToLowerInvariant())  IndexCreator-$rid.zip" | Set-Content (Join-Path $Output "IndexCreator-$rid.zip.sha256") -Encoding utf8
-}
+$version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+if (-not $version) { throw 'Version is not defined in Directory.Build.props.' }
+$folder = Join-Path $Output 'portable/IndexCreator'
+dotnet publish src/IndexCreator/IndexCreator.csproj -c Release --self-contained false --no-restore -p:DebugType=none -p:DebugSymbols=false -o $folder
+if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
+Copy-Item LICENSE, NOTICE, ThirdPartyNotices.txt -Destination $folder
+$zipName = "VehicleVision.PleasanterTools.IndexCreator-$version-portable.zip"
+Compress-Archive -Path $folder -DestinationPath (Join-Path $Output $zipName) -Force
+$hash = Get-FileHash (Join-Path $Output $zipName) -Algorithm SHA256
+"$($hash.Hash.ToLowerInvariant())  $zipName" | Set-Content (Join-Path $Output "$zipName.sha256") -Encoding utf8

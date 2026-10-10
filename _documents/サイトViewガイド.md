@@ -4,8 +4,8 @@ Results / Issues / Wikis の各サイトに、一覧の表示列と項目名を�
 Wikis には Status と Class / Num / Date / Check / Description / Attachments 列がないため、一覧列に指定すると停止します。
 
 ```powershell
-dotnet IndexCreator.dll views /p "C:\web\pleasanter\Implem.Pleasanter"
-dotnet IndexCreator.dll _views /p "C:\web\pleasanter\Implem.Pleasanter" /y
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll views /p "C:\web\pleasanter\Implem.Pleasanter"
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll _views /p "C:\web\pleasanter\Implem.Pleasanter" /y
 ```
 
 `views` は計画のみ、`_views` / `views-apply` は適用です。`/c` は確認のみ、`/y` は入力の省略です。接続設定はインデックス操作と共通です。適用には対象スキーマでの View 作成・変更権限が必要です。MySQL の本体 owner 接続に標準で付く権限には CREATE VIEW / SHOW VIEW が含まれないため、DB 管理者が追加するか、必要な権限を持つ接続を INDEXCREATOR_CONNECTION_STRING に指定してください。
@@ -28,7 +28,7 @@ GridColumns の順序で列を作り、GridLabelText、LabelText、本体の列�
 `column` では、表示名の重複を避ける処理は要りません。`TitleBody` は Items のタイトルを返し、列名は `TitleBody` のままです。GridColumns に同じ列が2回あると停止します。選択肢 View の列は Value / Text / TextMini で固定なので、`/names` は一覧 View だけで使えます。
 
 ```powershell
-dotnet IndexCreator.dll _views /names column /y
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll _views /names column /y
 ```
 
 途中で指定を変えると、View の列名が変わります。この View を使うクエリや BI がある場合は、最初に決めて固定してください。PostgreSQL は列名の変更を `CREATE OR REPLACE` ではできないため、`/f` を付けないと停止します。
@@ -46,7 +46,7 @@ View を作らないサイトは2つの方法で指定できます。どちら�
 | `/exclude-site <SiteId,...>` | 指定したサイトだけ。フォルダを指定しても配下は除外しない |
 
 ```powershell
-dotnet IndexCreator.dll views /exclude-tree 10 /exclude-site 205,318
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll views /exclude-tree 10 /exclude-site 205,318
 ```
 
 階層は Sites.ParentId で判定します。`/sites` で計画する場合は、フォルダを含む全サイトの行に ParentId を入れてください。存在しない SiteId を指定すると停止します。除外したサイトの既存の管理 View は、`/prune` を付けた場合に不要として削除されます。計画の一覧で確認してから適用してください。
@@ -56,8 +56,8 @@ dotnet IndexCreator.dll views /exclude-tree 10 /exclude-site 205,318
 再実行すると表示列と項目名を更新します。サイト名の変更は新しい名前の View を作ります。不要になった管理 View は、計画を確認してから `/prune` で整理します。
 
 ```powershell
-dotnet IndexCreator.dll views /prune
-dotnet IndexCreator.dll _views /prune /y
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll views /prune
+dotnet VehicleVision.PleasanterTools.IndexCreator.dll _views /prune /y
 ```
 
 削除するのは本ツールの命名規則に一致する View だけです。古い名前を参照している SQL や依存 View がある場合は、先に参照を変更してください。新しい名前の View に既存の参照権限は自動継承しません。
