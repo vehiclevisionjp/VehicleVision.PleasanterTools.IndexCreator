@@ -2,9 +2,14 @@
 
 Pleasanter のサイト構成から必要なインデックスを計画・作成・更新する .NET 10 コンソールアプリです。SQL Server・PostgreSQL・MySQL に対応し、CodeDefiner と同じように本体の設定を読んで実行します。コンソール出力は英語固定です。
 
+## マニュアル
+
+導入・設定・使い方・バージョンごとの対応は、
+[IndexCreator の公開マニュアル](https://pleasanter.docs.vehiclevision.jp/tools/index-creator-overview)をご覧ください。
+
 ## 配置する
 
-配布版は [v0.3.0](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/releases/tag/v0.3.0) です。Release の Assets から ZIP と SHA256 を取得してください。ZIP は OS・アーキテクチャ共通です。
+配布版は [v0.3.1](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/releases/tag/v0.3.1) です。Release の Assets から ZIP と SHA256 を取得してください。ZIP は OS・アーキテクチャ共通です。
 
 .NET Runtime 10 を用意し、配布 ZIP の `IndexCreator` フォルダを `Implem.Pleasanter`・`Implem.CodeDefiner` と同じ階層へ置きます。
 
