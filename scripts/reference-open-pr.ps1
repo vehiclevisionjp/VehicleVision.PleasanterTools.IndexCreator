@@ -14,8 +14,13 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot commit update.' }
 $issueBody = "参照を $($env:CURRENT_SHA) から $($env:LATEST_SHA) ($($env:LATEST_TAG)) に更新する。本体の引数・設定・DB 定義の互換性を確認し、設計資料と検証結果を更新する。自動マージは行わない。"
 $issuePath = Join-Path $env:RUNNER_TEMP 'reference-issue.md'
 $issueBody | Set-Content $issuePath -Encoding utf8
+# Issue の作成だけは ISSUE_GH_TOKEN（GITHUB_TOKEN）で行う。App に Issues の権限を足さずに済ませるため
+$appToken = $env:GH_TOKEN
+if ($env:ISSUE_GH_TOKEN) { $env:GH_TOKEN = $env:ISSUE_GH_TOKEN }
 $issueUrl = gh issue create --title "Pleasanter 参照を $($env:LATEST_TAG) に更新する" --body-file $issuePath
-if ($LASTEXITCODE -ne 0) { throw 'Cannot create update issue.' }
+$issueExit = $LASTEXITCODE
+$env:GH_TOKEN = $appToken
+if ($issueExit -ne 0) { throw 'Cannot create update issue.' }
 $number = ($issueUrl -split '/')[-1]
 git push origin $branch
 if ($LASTEXITCODE -ne 0) { throw 'Cannot push update branch.' }

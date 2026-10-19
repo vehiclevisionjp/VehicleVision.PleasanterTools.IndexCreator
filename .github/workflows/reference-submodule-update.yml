@@ -30,6 +30,10 @@ jobs:
     needs: check
     if: needs.check.outputs.needs_update == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      # Issue の作成だけに使う（GITHUB_TOKEN）。App には Issues の権限を要求しない
+      contents: read
+      issues: write
     steps:
       - uses: actions/create-github-app-token@v3
         id: app-token
@@ -38,14 +42,16 @@ jobs:
           private-key: ${{ secrets.MY_REPO_AUTOMATION_BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-          permission-issues: write
       - uses: actions/checkout@v7
         with:
           ref: develop
           token: ${{ steps.app-token.outputs.token }}
       - shell: pwsh
         env:
+          # ブランチの push と PR の作成は App のトークン
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Issue の作成だけは GITHUB_TOKEN（App に Issues の権限を足さないため）
+          ISSUE_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
           LATEST_SHA: ${{ needs.check.outputs.latest_sha }}
           CURRENT_SHA: ${{ needs.check.outputs.current_sha }}
