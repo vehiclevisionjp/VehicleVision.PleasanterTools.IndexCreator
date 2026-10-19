@@ -3,8 +3,18 @@
   "private": true,
   "version": "0.3.1",
   "license": "AGPL-3.0-or-later",
-  "engines": { "node": ">=24" },
-  "scripts": { "lint:md": "node scripts/markdownlint.mjs" },
-  "devDependencies": { "markdownlint": "0.42.0", "playwright-core": "1.64.1" },
-  "overrides": { "katex": "0.19.0" }
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "lint:md": "node scripts/markdownlint.mjs",
+    "lint:md:fix": "node scripts/markdownlint.mjs --fix"
+  },
+  "devDependencies": {
+    "markdownlint": "0.42.0",
+    "playwright-core": "1.64.1"
+  },
+  "overrides": {
+    "katex": "0.19.0"
+  }
 }
