@@ -8,6 +8,12 @@ NLog 6.2.1 - BSD-3-Clause - https://github.com/NLog/NLog
 Microsoft.Data.SqlClient 7.1.1 - MIT - https://github.com/dotnet/SqlClient
 Npgsql 10.0.3 - PostgreSQL License - https://github.com/npgsql/npgsql
 MySqlConnector 2.6.2 - MIT - https://github.com/mysql-net/MySqlConnector
+System.Security.Cryptography.Pkcs 10.0.13 - MIT - https://www.nuget.org/packages/System.Security.Cryptography.Pkcs
+  (Pinned to a patched version; pulled in transitively by Microsoft.Data.SqlClient.)
+
+Development-only npm dependencies (not included in the distribution):
+markdownlint 0.42.0 - MIT - https://github.com/DavidAnson/markdownlint
+playwright-core 1.64.1 - Apache-2.0 - https://playwright.dev
 
 Third-party license texts are in ThirdPartyNotices.txt. Most transitive Microsoft
 packages and System.* packages are MIT; locked versions are in packages.lock.json.
