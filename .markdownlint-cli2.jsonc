@@ -1,0 +1,11 @@
+// Markdown の検査の設定（scripts/markdownlint.mjs が読む。VS Code の markdownlint 拡張も同じ書式）
+{
+  "config": {
+    "MD013": false,
+    "MD024": { "siblings_only": true },
+    "MD033": false,
+    // 表の縦線の揃え方（markdownlint 0.40 で追加された規則）。既存の表は揃え方がまちまちなので止める
+    "MD060": false
+  },
+  "ignores": ["**/pull_request_template.md"]
+}

@@ -15,6 +15,7 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
 jobs:
   build-test:
+    name: build-test
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -44,6 +45,7 @@ jobs:
           path: artifacts/package/*.zip*
           if-no-files-found: error
   databases:
+    name: databases / ${{ matrix.dbms }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -63,7 +65,7 @@ jobs:
         if: always()
         run: docker compose --profile '*' down -v
   appservice-layout:
-    name: App Service 配置（${{ matrix.rid }}）
+    name: appservice-layout / ${{ matrix.rid }}
     needs: build-test
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -100,3 +102,14 @@ jobs:
           $dotnetHostPath = if ('${{ matrix.rid }}' -eq 'win-x86') { Join-Path $env:RUNNER_TEMP 'dotnet-x86/dotnet.exe' } else { 'dotnet' }
           & $dotnetHostPath --info
           ./scripts/appservice-smoke.ps1 -Platform '${{ matrix.rid }}' -DotnetPath $dotnetHostPath
+
+  instructions:
+    name: instructions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+          persist-credentials: false
+      - run: bash scripts/reference-isolation-check.sh
