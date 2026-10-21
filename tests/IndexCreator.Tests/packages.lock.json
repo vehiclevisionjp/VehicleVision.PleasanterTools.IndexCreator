@@ -153,8 +153,8 @@
       },
       "NLog": {
         "type": "Transitive",
-        "resolved": "6.2.1",
-        "contentHash": "fTGNuJyzkgDc1TBEGXF+FMT4b6kB7gygkSN3dLei2Ziiwx/rugXA+OyyFWZ60P1G/+SzzSKiWHlQ4OklC8AgRg=="
+        "resolved": "6.2.2",
+        "contentHash": "Hoxigm/d7wY/+y4y2ILF2ERSojhxgLd8ASBZQbrnm52jB5NHkF4AWW5tZzMxJ/HTOp0bLwClGOokrA31iSXuMA=="
       },
       "Npgsql": {
         "type": "Transitive",
@@ -207,7 +207,7 @@
         "dependencies": {
           "Microsoft.Data.SqlClient": "[7.1.1, )",
           "MySqlConnector": "[2.6.2, )",
-          "NLog": "[6.2.1, )",
+          "NLog": "[6.2.2, )",
           "Npgsql": "[10.0.3, )",
           "System.Security.Cryptography.Pkcs": "[10.0.13, )"
         }
