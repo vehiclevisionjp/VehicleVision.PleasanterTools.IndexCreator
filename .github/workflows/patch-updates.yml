@@ -68,7 +68,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           # master があれば master（リリース確定用）。まだ無い（未リリースの）リポジトリでは develop を土台にする
-          if gh api "repos/$GH_REPO/branches/master" >/dev/null 2>&1; then base=master; else base=develop; fi
+          # branches/master は、master が無いと既定のブランチの情報を返すことがあるので、一覧から名前で調べる
+          if gh api --paginate "repos/$GH_REPO/branches" --jq '.[].name' | grep -qx master; then base=master; else base=develop; fi
           echo "base=$base" >>"$GITHUB_OUTPUT"
           # 土台にスクリプトが無い（develop にだけ入れた直後）ときは、次のリリースまで何もしない
           if gh api "repos/$GH_REPO/contents/scripts/apply-patch-updates.mjs?ref=$base" >/dev/null 2>&1; then ready=true; else ready=false; fi
