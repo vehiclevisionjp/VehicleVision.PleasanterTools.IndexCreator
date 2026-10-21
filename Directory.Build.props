@@ -4,6 +4,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- .editorconfig の IDE 規則（{} の省略禁止など）を、ビルドで強制する -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <Version>0.3.1</Version>
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>

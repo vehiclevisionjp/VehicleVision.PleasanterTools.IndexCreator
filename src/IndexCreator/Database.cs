@@ -50,7 +50,10 @@ public sealed partial class Database : IAsyncDisposable
             Dbms.PostgreSQL => result is true,
             _ => result != null && result != DBNull.Value && Convert.ToInt32(result) == 1
         };
-        if (!acquired) throw new UserError("Another IndexCreator apply is running. No changes were applied.");
+        if (!acquired)
+        {
+            throw new UserError("Another IndexCreator apply is running. No changes were applied.");
+        }
     }
     public async Task<IReadOnlyList<Site>> ReadSites(CancellationToken ct)
     {
@@ -70,7 +73,11 @@ public sealed partial class Database : IAsyncDisposable
         var sites = new List<Site>();
         while (await reader.ReadAsync(ct))
         {
-            if (reader.IsDBNull(2)) throw new UserError("A site has missing SiteSettings. No changes were applied.");
+            if (reader.IsDBNull(2))
+            {
+                throw new UserError("A site has missing SiteSettings. No changes were applied.");
+            }
+
             var settings = Json.Parse(reader.GetString(2));
             Json.ValidateSettings(settings);
             sites.Add(new(Convert.ToInt64(reader.GetValue(0)), reader.GetString(1), settings, Convert.ToInt64(reader.GetValue(3)), reader.IsDBNull(4) ? "" : reader.GetString(4)));
@@ -83,7 +90,11 @@ public sealed partial class Database : IAsyncDisposable
         cmd.Parameters.Clear();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         var parents = new Dictionary<long, long>();
-        while (await reader.ReadAsync(ct)) parents[Convert.ToInt64(reader.GetValue(0))] = reader.IsDBNull(1) ? 0 : Convert.ToInt64(reader.GetValue(1));
+        while (await reader.ReadAsync(ct))
+        {
+            parents[Convert.ToInt64(reader.GetValue(0))] = reader.IsDBNull(1) ? 0 : Convert.ToInt64(reader.GetValue(1));
+        }
+
         return parents;
     }
     public async Task<IReadOnlyList<ExistingIndex>> ReadIndexes(CancellationToken ct)
@@ -129,7 +140,11 @@ public sealed partial class Database : IAsyncDisposable
             var key = new Key(reader.GetString(2), Convert.ToBoolean(reader.GetValue(3)), Convert.ToInt32(reader.GetValue(4)), reader.GetString(5) == "varchar_pattern_ops");
             var valid = Convert.ToBoolean(reader.GetValue(6));
             var plain = !reader.IsDBNull(7) && Convert.ToBoolean(reader.GetValue(7));
-            if (!entries.TryGetValue(id, out var entry)) entry = ([], true, true);
+            if (!entries.TryGetValue(id, out var entry))
+            {
+                entry = ([], true, true);
+            }
+
             entry.Keys.Add(key);
             entries[id] = (entry.Keys, entry.Valid && valid, entry.Plain && plain);
         }
@@ -140,18 +155,31 @@ public sealed partial class Database : IAsyncDisposable
         await using var cmd = Command("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@schema AND TABLE_NAME IN ('Results','Issues','Wikis','Items')");
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         var columns = new HashSet<(string, string)>();
-        while (await reader.ReadAsync(ct)) columns.Add((reader.GetString(0), reader.GetString(1)));
-        if (specs.Any(s => s.Keys.Any(k => !columns.Contains((s.Table, k.Column))))) throw new UserError("A required column does not exist in the target schema. No changes were applied.");
+        while (await reader.ReadAsync(ct))
+        {
+            columns.Add((reader.GetString(0), reader.GetString(1)));
+        }
+
+        if (specs.Any(s => s.Keys.Any(k => !columns.Contains((s.Table, k.Column)))))
+        {
+            throw new UserError("A required column does not exist in the target schema. No changes were applied.");
+        }
     }
     public async Task Apply(IReadOnlyList<Change> changes, CancellationToken ct, IReadOnlyList<Site>? expectedSites = null)
     {
         async Task CheckSiteSnapshot()
         {
-            if (expectedSites == null) return;
+            if (expectedSites == null)
+            {
+                return;
+            }
+
             var current = await ReadSites(ct);
             var snapshot = expectedSites.ToDictionary(s => s.SiteId, s => s.ReferenceType + "|" + s.Title + "|" + s.SiteSettings.GetRawText());
             if (current.Count != snapshot.Count || current.Any(s => !snapshot.TryGetValue(s.SiteId, out var value) || value != s.ReferenceType + "|" + s.Title + "|" + s.SiteSettings.GetRawText()))
+            {
                 throw new UserError("Site configuration changed during apply. No further changes were applied; re-run plan.");
+            }
         }
         await CheckSiteSnapshot();
         // PostgreSQL の CONCURRENTLY は業務の読み書きを妨げない弱いロックだけを使う。
@@ -160,26 +188,45 @@ public sealed partial class Database : IAsyncDisposable
         // 並行する CodeDefiner やサイト設定変更は別運用で止める。索引作成後にのみ古い索引を削除する。
         foreach (var c in changes.Where(c => c.Kind is ChangeKind.Create or ChangeKind.Repair))
         {
-            if (c.Kind == ChangeKind.Repair) await Retry(() => Execute(dialect.Drop(c.Spec.Table, c.Name), ct), ct);
+            if (c.Kind == ChangeKind.Repair)
+            {
+                await Retry(() => Execute(dialect.Drop(c.Spec.Table, c.Name), ct), ct);
+            }
+
             await Retry(() => Execute(dialect.Create(c.Spec, lockTimeout), ct), ct);
             RuntimeLog.WriteLine("Created " + c.Name);
         }
         var refreshed = await ReadIndexes(ct);
         foreach (var c in changes.Where(c => c.Kind is not ChangeKind.Drop))
+        {
             if (!refreshed.Any(e => e.Table == c.Spec.Table && e.Name == c.Name && e.Plain && e.Valid && e.Spec.Covers(c.Spec)))
+            {
                 throw new UserError("Index verification failed. Obsolete indexes were not removed.");
+            }
+        }
+
         await CheckSiteSnapshot();
         foreach (var c in changes.Where(c => c.Kind == ChangeKind.Drop))
         {
-            if (!IndexSpec.IsManaged(c.Spec.Table, c.Name)) throw new UserError("Refusing to remove an unmanaged index.");
+            if (!IndexSpec.IsManaged(c.Spec.Table, c.Name))
+            {
+                throw new UserError("Refusing to remove an unmanaged index.");
+            }
+
             await Retry(() => Execute(dialect.Drop(c.Spec.Table, c.Name), ct), ct);
             RuntimeLog.WriteLine("Dropped " + c.Name);
         }
     }
     public async Task SetLockTimeout(bool enabled, CancellationToken ct)
     {
-        if (enabled) await Execute(dialect.LockTimeout(lockTimeout), ct);
-        else if (config.Dbms == Dbms.PostgreSQL) await Execute("SET lock_timeout = 0;", ct);
+        if (enabled)
+        {
+            await Execute(dialect.LockTimeout(lockTimeout), ct);
+        }
+        else if (config.Dbms == Dbms.PostgreSQL)
+        {
+            await Execute("SET lock_timeout = 0;", ct);
+        }
     }
     // ロック待ちの上限に達した DDL は何も変更せずに中止されるため、間隔を空けて再試行する。
     public async Task Retry(Func<Task> action, CancellationToken ct)

@@ -51,30 +51,60 @@ public static class Program
                 return 0;
             }
             var config = Configuration.Load(options);
-            if (options.Action.StartsWith("views", StringComparison.Ordinal)) return await RunViews(options, config, cancel.Token);
+            if (options.Action.StartsWith("views", StringComparison.Ordinal))
+            {
+                return await RunViews(options, config, cancel.Token);
+            }
+
             if (!config.DisableIndexChangeDetection)
             {
                 RuntimeLog.WriteLine("WARNING: DisableIndexChangeDetection is not true. Set it in Rds.json before applying indexes.");
-                if (options.Action == "apply") throw new UserError("Apply requires DisableIndexChangeDetection=true in Rds.json.");
+                if (options.Action == "apply")
+                {
+                    throw new UserError("Apply requires DisableIndexChangeDetection=true in Rds.json.");
+                }
             }
             if (config.Dbms == Dbms.SQLServer && !options.Offline)
+            {
                 RuntimeLog.WriteLine("INFO: Indexes are created online. Editions without online index operations stop; use /offline only in a maintenance window.");
+            }
+
             IReadOnlyList<Site> sites;
             IReadOnlyList<ExistingIndex> existing = [];
             await using var database = options.SitesFile == null ? new Database(config, options.Offline, options.LockTimeout) : null;
             if (database != null)
             {
                 await database.Open(cancel.Token);
-                if (options.Action == "apply") await database.AcquireLock(cancel.Token);
+                if (options.Action == "apply")
+                {
+                    await database.AcquireLock(cancel.Token);
+                }
+
                 sites = await database.ReadSites(cancel.Token);
                 existing = await database.ReadIndexes(cancel.Token);
             }
-            else sites = Json.ReadSites(await File.ReadAllTextAsync(options.SitesFile!, cancel.Token));
+            else
+            {
+                sites = Json.ReadSites(await File.ReadAllTextAsync(options.SitesFile!, cancel.Token));
+            }
+
             var analysis = new Planner(config.Dbms, options.MinRecords, options.IncludeFilters, options.MysqlPrefix).Analyze(sites);
-            if (database != null) await database.ValidateColumns(analysis.Indexes, cancel.Token);
-            foreach (var d in analysis.Diagnostics) RuntimeLog.WriteLine($"WARNING: Site {d.SiteId}: {d.Message}");
+            if (database != null)
+            {
+                await database.ValidateColumns(analysis.Indexes, cancel.Token);
+            }
+
+            foreach (var d in analysis.Diagnostics)
+            {
+                RuntimeLog.WriteLine($"WARNING: Site {d.SiteId}: {d.Message}");
+            }
+
             var changes = Reconciler.Plan(analysis.Indexes, existing, options.Prune, options.Force);
-            foreach (var change in changes) RuntimeLog.WriteLine($"{change.Kind,-7} {change.Spec.Table,-7} {change.Name}");
+            foreach (var change in changes)
+            {
+                RuntimeLog.WriteLine($"{change.Kind,-7} {change.Spec.Table,-7} {change.Name}");
+            }
+
             var pending = changes.Count(c => c.Kind != ChangeKind.Keep);
             RuntimeLog.WriteLine($"Sites: {sites.Count}. Desired indexes: {analysis.Indexes.Count}. Pending operations: {pending}.");
             var dialect = new SqlDialect(config.Dbms, config.Schema, options.Offline);
@@ -83,16 +113,31 @@ public static class Program
                 var statements = new List<string> { "-- IndexCreator inspected plan. Re-run plan before execution; database state may have changed.", "-- PostgreSQL concurrent operations must run outside a transaction.", "-- Run IndexCreator apply again after CodeDefiner rebuilds tables." };
                 foreach (var c in changes.Where(c => c.Kind != ChangeKind.Keep))
                 {
-                    if (c.Kind is ChangeKind.Drop or ChangeKind.Repair) statements.Add(dialect.Drop(c.Spec.Table, c.Name));
-                    if (c.Kind is ChangeKind.Create or ChangeKind.Repair) statements.Add(dialect.Create(c.Spec, options.LockTimeout));
+                    if (c.Kind is ChangeKind.Drop or ChangeKind.Repair)
+                    {
+                        statements.Add(dialect.Drop(c.Spec.Table, c.Name));
+                    }
+
+                    if (c.Kind is ChangeKind.Create or ChangeKind.Repair)
+                    {
+                        statements.Add(dialect.Create(c.Spec, options.LockTimeout));
+                    }
                 }
                 await File.WriteAllTextAsync(options.Output, string.Join(Environment.NewLine, statements), cancel.Token);
                 RuntimeLog.WriteLine("SQL plan exported.");
             }
-            if (options.Action == "plan" || pending == 0) return 0;
+            if (options.Action == "plan" || pending == 0)
+            {
+                return 0;
+            }
+
             if (!options.Yes)
             {
-                if (Console.IsInputRedirected) throw new UserError("Non-interactive apply requires /y.");
+                if (Console.IsInputRedirected)
+                {
+                    throw new UserError("Non-interactive apply requires /y.");
+                }
+
                 RuntimeLog.Write("Apply the listed changes? Type yes: ");
                 if (Console.ReadLine() != "yes") { RuntimeLog.WriteLine("Cancelled. No changes were applied."); return 2; }
             }
@@ -115,11 +160,19 @@ public static class Program
         if (database != null)
         {
             await database.Open(ct);
-            if (options.Action.EndsWith("-apply", StringComparison.Ordinal)) await database.AcquireLock(ct);
+            if (options.Action.EndsWith("-apply", StringComparison.Ordinal))
+            {
+                await database.AcquireLock(ct);
+            }
+
             sites = await database.ReadSites(ct);
             existing = await database.ReadViewNames(ct);
         }
-        else sites = Json.ReadSites(await File.ReadAllTextAsync(options.SitesFile!, ct));
+        else
+        {
+            sites = Json.ReadSites(await File.ReadAllTextAsync(options.SitesFile!, ct));
+        }
+
         var targets = sites;
         if (options.Exclusion is { IsEmpty: false } exclusion)
         {
@@ -129,14 +182,34 @@ public static class Program
         }
         var choices = options.Action.Contains("choices", StringComparison.Ordinal);
         var views = choices ? new ChoicePlanner(options.Path).Generate(targets, sites) : new ViewPlanner(config.Dbms, Configuration.ResolvePath(options.Path), options.ColumnNames == "column").Generate(targets);
-        if (database != null) await database.ValidateColumns(views.SelectMany(v => v.RequiredColumns()).ToArray(), ct);
+        if (database != null)
+        {
+            await database.ValidateColumns(views.SelectMany(v => v.RequiredColumns()).ToArray(), ct);
+        }
+
         var dialect = new SqlDialect(config.Dbms, config.Schema);
-        if (choices && database != null && config.Dbms == Dbms.MySQL) dialect.Collation = await database.ReadSchemaCollation(ct);
+        if (choices && database != null && config.Dbms == Dbms.MySQL)
+        {
+            dialect.Collation = await database.ReadSchemaCollation(ct);
+        }
+
         var drops = options.Prune ? existing.Where(n => SiteView.IsManaged(n, choices)).Where(n => !views.Any(v => v.Name == n)).ToArray() : [];
-        foreach (var view in views) RuntimeLog.WriteLine($"{(existing.Contains(view.Name) ? "Update" : "Create"),-7} VIEW {view.ConsoleName} Columns: {view.Columns.Count}");
-        foreach (var name in drops) RuntimeLog.WriteLine("Drop    VIEW " + SiteView.ConsoleIdentifier(name));
+        foreach (var view in views)
+        {
+            RuntimeLog.WriteLine($"{(existing.Contains(view.Name) ? "Update" : "Create"),-7} VIEW {view.ConsoleName} Columns: {view.Columns.Count}");
+        }
+
+        foreach (var name in drops)
+        {
+            RuntimeLog.WriteLine("Drop    VIEW " + SiteView.ConsoleIdentifier(name));
+        }
+
         RuntimeLog.WriteLine("INFO: SQL views expose database values. UI permissions, formatting, saved-view filters and row ordering are not reproduced.");
-        if (choices) RuntimeLog.WriteLine("INFO: Choice views read SiteSettings at query time. Choice edits need no re-run; new columns and site renames do.");
+        if (choices)
+        {
+            RuntimeLog.WriteLine("INFO: Choice views read SiteSettings at query time. Choice edits need no re-run; new columns and site renames do.");
+        }
+
         if (options.Output != null)
         {
             var prefix = config.Dbms == Dbms.SQLServer ? "CREATE OR ALTER VIEW " : "CREATE OR REPLACE VIEW ";
@@ -144,16 +217,27 @@ public static class Program
             foreach (var view in views)
             {
                 statements.Add(prefix + dialect.Table(view.Name) + " AS " + view.Select(dialect) + ";");
-                if (config.Dbms == Dbms.SQLServer) statements.Add("GO");
+                if (config.Dbms == Dbms.SQLServer)
+                {
+                    statements.Add("GO");
+                }
             }
             statements.AddRange(drops.Select(name => "DROP VIEW " + dialect.Table(name) + ";"));
             await File.WriteAllTextAsync(options.Output, string.Join(Environment.NewLine, statements), ct);
             RuntimeLog.WriteLine("SQL view plan exported.");
         }
-        if (!options.Action.EndsWith("-apply", StringComparison.Ordinal)) return 0;
+        if (!options.Action.EndsWith("-apply", StringComparison.Ordinal))
+        {
+            return 0;
+        }
+
         if (!options.Yes)
         {
-            if (Console.IsInputRedirected) throw new UserError("Non-interactive view apply requires /y.");
+            if (Console.IsInputRedirected)
+            {
+                throw new UserError("Non-interactive view apply requires /y.");
+            }
+
             RuntimeLog.Write("Apply the listed view changes? Type yes: ");
             if (Console.ReadLine() != "yes") { RuntimeLog.WriteLine("Cancelled. No views were applied."); return 2; }
         }

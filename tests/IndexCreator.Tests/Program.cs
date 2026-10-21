@@ -3,7 +3,11 @@ using VehicleVision.PleasanterTools.IndexCreator;
 var passed = 0;
 void Check(bool condition, string name)
 {
-    if (!condition) throw new Exception("FAIL: " + name);
+    if (!condition)
+    {
+        throw new Exception("FAIL: " + name);
+    }
+
     passed++;
 }
 void Reject(Action action, string name)
@@ -243,22 +247,39 @@ if (args.Contains("--integration"))
 {
     var dbName = Environment.GetEnvironmentVariable("INDEXCREATOR_TEST_DBMS");
     var cs = Environment.GetEnvironmentVariable("INDEXCREATOR_TEST_CONNECTION");
-    if (!Enum.TryParse<Dbms>(dbName, out var dbms) || string.IsNullOrWhiteSpace(cs)) throw new Exception("Integration requires INDEXCREATOR_TEST_DBMS and INDEXCREATOR_TEST_CONNECTION.");
+    if (!Enum.TryParse<Dbms>(dbName, out var dbms) || string.IsNullOrWhiteSpace(cs))
+    {
+        throw new Exception("Integration requires INDEXCREATOR_TEST_DBMS and INDEXCREATOR_TEST_CONNECTION.");
+    }
+
     var target = new System.Data.Common.DbConnectionStringBuilder { ConnectionString = cs };
-    if (!target.ContainsKey("Database") || target["Database"].ToString() != "IndexCreatorTest") throw new Exception("Integration only accepts the dedicated IndexCreatorTest database.");
+    if (!target.ContainsKey("Database") || target["Database"].ToString() != "IndexCreatorTest")
+    {
+        throw new Exception("Integration only accepts the dedicated IndexCreatorTest database.");
+    }
     // 専用検証 DB だけを使用。実運用 DB を渡さないこと。
     var schema = dbms == Dbms.SQLServer ? "dbo" : "IndexCreatorTest";
     var configuration = new Configuration(dbms, schema, cs, true, 120);
     await using var database = new Database(configuration);
     await database.Open(default);
     var d = new SqlDialect(dbms, schema);
-    if (dbms == Dbms.PostgreSQL) await database.Execute($"CREATE SCHEMA IF NOT EXISTS {d.Quote(schema)}");
+    if (dbms == Dbms.PostgreSQL)
+    {
+        await database.Execute($"CREATE SCHEMA IF NOT EXISTS {d.Quote(schema)}");
+    }
     // 本体の MySQL は utf8mb4_general_ci で DB を作る（Definitions/Sqls/MySQL/CreateDatabase.sql）。
-    if (dbms == Dbms.MySQL) await database.Execute("ALTER DATABASE `IndexCreatorTest` COLLATE utf8mb4_general_ci");
+    if (dbms == Dbms.MySQL)
+    {
+        await database.Execute("ALTER DATABASE `IndexCreatorTest` COLLATE utf8mb4_general_ci");
+    }
+
     var str = dbms switch { Dbms.SQLServer => "nvarchar(max)", Dbms.MySQL => "longtext", _ => "text" };
     var classType = dbms switch { Dbms.SQLServer => "nvarchar(1024)", Dbms.PostgreSQL => "varchar(1024)", _ => "text" };
     foreach (var table in new[] { "Results", "Issues", "Wikis" })
+    {
         await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("ClassB")} {classType}, {d.Quote("Status")} int, {d.Quote("Manager")} int NOT NULL DEFAULT 0, {d.Quote("Owner")} int NOT NULL DEFAULT 0, {d.Quote("DateA")} timestamp NULL, {d.Quote("DateB")} timestamp NULL{(table == "Issues" ? $", {d.Quote("CompletionTime")} timestamp NULL" : "")}{(table == "Wikis" ? $", {d.Quote("Body")} {str}" : "")})".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
+    }
+
     await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str}, {d.Quote("Title")} {str}, {d.Quote("ParentId")} bigint NOT NULL DEFAULT 0)");
     await database.Execute($"CREATE TABLE {d.Table("Items")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceId")} bigint NOT NULL, {d.Quote("Title")} {str})");
     if (dbms == Dbms.MySQL)
@@ -337,7 +358,11 @@ if (args.Contains("--integration"))
     var final = await database.ReadIndexes(default);
     Check(final.Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 3, "Live standard indexes preserved");
     Check(final.Where(i => i.Managed).All(i => updated.Any(s => s.Name == i.Name)), "Live obsolete indexes removed");
-    foreach (var i in final.Where(i => i.Managed)) await database.Execute(d.Drop(i.Table, i.Name));
+    foreach (var i in final.Where(i => i.Managed))
+    {
+        await database.Execute(d.Drop(i.Table, i.Name));
+    }
+
     await database.Apply(Reconciler.Plan(updated, await database.ReadIndexes(default), false), default);
     Check(Reconciler.Plan(updated, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Recover after managed indexes disappear");
     var liveView = new ViewPlanner(dbms).Generate([SiteWith(viewSettings) with { Title = "顧客一覧" }]).Single();
@@ -417,7 +442,11 @@ if (args.Contains("--integration"))
             read.CommandText = "SELECT * FROM " + d.Table(view.Name);
             await using var rows = await read.ExecuteReaderAsync();
             var result = new List<ChoiceRow>();
-            while (await rows.ReadAsync()) result.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2)));
+            while (await rows.ReadAsync())
+            {
+                result.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2)));
+            }
+
             return result;
         }
         // 本体の区切り規則を DB の組込関数で再現できるかを、同じ設定の .NET 解析結果と比べる。
@@ -509,8 +538,14 @@ if (args.Contains("--integration"))
             var gaveUp = false;
             try
             {
-                if (dbms == Dbms.PostgreSQL) await impatient.ApplyViews([choiceView], false, default, choices: true);
-                else await impatient.Apply(Reconciler.Plan([lockSpec], await impatient.ReadIndexes(default), false), default);
+                if (dbms == Dbms.PostgreSQL)
+                {
+                    await impatient.ApplyViews([choiceView], false, default, choices: true);
+                }
+                else
+                {
+                    await impatient.Apply(Reconciler.Plan([lockSpec], await impatient.ReadIndexes(default), false), default);
+                }
             }
             catch (UserError) { gaveUp = true; }
             Check(gaveUp && watch.Elapsed < TimeSpan.FromSeconds(30), "DDL gives up within the lock wait limit");
@@ -524,7 +559,15 @@ if (args.Contains("--integration"))
     await database.ApplyViews([], true, default, choices: true);
     Check(!(await database.ReadViewNames(default)).Contains(choiceView.Name), "Choice prune removes only choice views");
     await database.Execute("DROP VIEW " + d.Table("standard_site_view"));
-    if (args.Contains("--benchmark")) await Benchmark.Run(configuration, database, d);
-    foreach (var table in new[] { "Sites", "Items", "Results", "Issues", "Wikis" }) await database.Execute($"DROP TABLE {d.Table(table)}");
+    if (args.Contains("--benchmark"))
+    {
+        await Benchmark.Run(configuration, database, d);
+    }
+
+    foreach (var table in new[] { "Sites", "Items", "Results", "Issues", "Wikis" })
+    {
+        await database.Execute($"DROP TABLE {d.Table(table)}");
+    }
+
     Console.WriteLine($"Integration checks passed ({dbms}). Total checks: {passed}");
 }
