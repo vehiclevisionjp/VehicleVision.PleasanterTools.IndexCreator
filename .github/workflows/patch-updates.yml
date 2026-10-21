@@ -6,7 +6,7 @@
 #   （scripts/apply-patch-updates.mjs）にして、NOTICE とロックファイルまで 1 つの PR にする。**
 #
 # ■ 流れ
-#   1. 毎日、master を取得して、同じ major.minor の最新 patch を npm・NuGet から探す（minor・major は上げない）
+#   1. 毎日 2 回、master を取得して、同じ major.minor の最新 patch を npm・NuGet から探す（minor・major は上げない）
 #   2. 更新があれば、版・ロックファイル・NOTICE を直して、**App のトークンで** master への PR を作る
 #   3. **PR に自動マージを設定する。** 必須チェックが全部通れば、GitHub が自動でマージする
 #   4. マージされると、patch-updates-sync.yml が master → develop の同期 PR を作って、同じく自動マージする
@@ -23,9 +23,9 @@
 name: Patch Updates
 
 on:
-  # 毎日 09:00 JST（前日 00:00 UTC）。**cron は UTC 固定**。実行時刻は GitHub の混雑でずれることがある
+  # 毎日 09:00 と 21:00 JST（00:00 と 12:00 UTC）。**cron は UTC 固定**。実行時刻は GitHub の混雑でずれることがある
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 0,12 * * *"
   workflow_dispatch:
 
 concurrency:
