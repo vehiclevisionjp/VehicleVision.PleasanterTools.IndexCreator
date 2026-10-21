@@ -1,4 +1,4 @@
-# npm と NuGet の patch 更新を検出して適用し、master へ PR を出して、CI が通れば自動でマージする。
+# npm と NuGet の patch 更新を検出して適用し、master（まだ無いリポジトリでは develop）へ PR を出して、CI が通れば自動でマージする。
 #
 # ■ なぜ Dependabot を使わないか
 #   Dependabot の PR は、NOTICE の版・他のプロジェクトのロックファイルが追随せず、毎回人が直していた
@@ -61,49 +61,60 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: 前回の PR が開いたままなら終わる
-        id: open
+      - name: 土台のブランチを決める
+        id: base
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          open="$(gh pr list --state open --base master --json headRefName --jq '[.[] | select(.headRefName | startswith("chore/patch-updates-"))] | length')"
+          # master があれば master（リリース確定用）。まだ無い（未リリースの）リポジトリでは develop を土台にする
+          if gh api "repos/$GH_REPO/branches/master" >/dev/null 2>&1; then base=master; else base=develop; fi
+          echo "base=$base" >>"$GITHUB_OUTPUT"
+          # 土台にスクリプトが無い（develop にだけ入れた直後）ときは、次のリリースまで何もしない
+          if gh api "repos/$GH_REPO/contents/scripts/apply-patch-updates.mjs?ref=$base" >/dev/null 2>&1; then ready=true; else ready=false; fi
+          echo "ready=$ready" >>"$GITHUB_OUTPUT"
+          if [ "$ready" != true ]; then
+            echo "$base に scripts/apply-patch-updates.mjs がまだ無いので、何もしません（次のリリースで $base へ入ってから動きます）。" >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          open="$(gh pr list --state open --base "$base" --json headRefName --jq '[.[] | select(.headRefName | startswith("chore/patch-updates-"))] | length')"
           echo "open=$open" >>"$GITHUB_OUTPUT"
           if [ "$open" != 0 ]; then
             echo "前回の patch 更新の PR が開いたままです（$open 件）。新しい PR は作りません。" >>"$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: master を取得する
-        if: steps.open.outputs.open == '0'
+      - name: 土台のブランチを取得する
+        if: steps.base.outputs.ready == 'true' && steps.base.outputs.open == '0'
         uses: actions/checkout@v7
         with:
-          ref: master
+          ref: ${{ steps.base.outputs.base }}
           submodules: false
           token: ${{ steps.app-token.outputs.token }}
 
       - name: .NET SDK を用意する
-        if: steps.open.outputs.open == '0'
+        if: steps.base.outputs.ready == 'true' && steps.base.outputs.open == '0'
         uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
       - name: Node.js を用意する
-        if: steps.open.outputs.open == '0'
+        if: steps.base.outputs.ready == 'true' && steps.base.outputs.open == '0'
         uses: actions/setup-node@v7
         with:
           node-version: "24"
 
       - name: patch 更新を検出して適用する
-        if: steps.open.outputs.open == '0'
+        if: steps.base.outputs.ready == 'true' && steps.base.outputs.open == '0'
         id: apply
         run: node scripts/apply-patch-updates.mjs
 
       - name: ブランチを作って PR を出し、自動マージを設定する
-        if: steps.open.outputs.open == '0' && steps.apply.outputs.changed == 'true'
+        if: steps.base.outputs.open == '0' && steps.apply.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           COUNT: ${{ steps.apply.outputs.count }}
+          BASE: ${{ steps.base.outputs.base }}
         run: |
           set -euo pipefail
           branch="chore/patch-updates-$(date -u +%Y%m%d)"
@@ -117,7 +128,7 @@ jobs:
           同じ major.minor の最新の安定版へ上げた。NOTICE の版とロックファイルも追随させた（scripts/apply-patch-updates.mjs）。
           検証: PR の CI（必須チェック）が通ったら自動でマージする。"
           git push origin "$branch"
-          url="$(gh pr create --base master --head "$branch" \
+          url="$(gh pr create --base "$BASE" --head "$branch" \
             --title "npm と NuGet の patch 更新（${COUNT} 件）を自動で適用する" \
             --body-file "$RUNNER_TEMP/summary.md")"
           echo "PR: $url" >>"$GITHUB_STEP_SUMMARY"
