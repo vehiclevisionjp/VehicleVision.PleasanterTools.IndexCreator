@@ -22,8 +22,15 @@ internal static class Benchmark
                 var watch = Stopwatch.StartNew();
                 var count = Convert.ToInt64(await cmd.ExecuteScalarAsync());
                 watch.Stop();
-                if (count != expected) throw new Exception("Benchmark result mismatch.");
-                if (i > 0) times.Add(watch.Elapsed.TotalMilliseconds);
+                if (count != expected)
+                {
+                    throw new Exception("Benchmark result mismatch.");
+                }
+
+                if (i > 0)
+                {
+                    times.Add(watch.Elapsed.TotalMilliseconds);
+                }
             }
             return times.Order().ElementAt(2);
         }
