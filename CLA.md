@@ -34,7 +34,7 @@ CLA の導入によって現在のライセンスは変わらず、商用ライ�
 
 「本ソフトウェア」とは VehicleVision.PleasanterTools.IndexCreator を、
 「貢献」とはあなたが本ソフトウェアへ提出する著作物（コード・文書・図・設定を含む）を指します。
-「当社」とは株式会社ビークルビジョンを指します。
+「当社」とは株式会社ピー・エム・シー ITソリューション事業部を指します。
 
 ### 1.1 著作権の許諾
 
@@ -94,6 +94,8 @@ CLA の導入によって現在のライセンスは変わらず、商用ライ�
 [CONTRIBUTING.md](CONTRIBUTING.md) の「CLA へ署名する」を参照してください。
 
 参照元: [Template の CLA][template-cla]（2026-10-22 参照）。
-対象ソフトウェア名と冒頭の説明を本リポジトリに合わせ、許諾条項は変更していません。
+対象ソフトウェア名と冒頭の説明を本リポジトリに合わせています。
+許諾先はユーザー指示（2026-10-22）により株式会社ピー・エム・シー ITソリューション事業部に統一し、
+その他の許諾条項は変更していません。
 
 [template-cla]: https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.Template/blob/60ad8ae1913e6ff663d2df1a3acd6143bd3fe3f7/CLA.md
