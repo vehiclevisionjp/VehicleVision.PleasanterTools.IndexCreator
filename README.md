@@ -84,4 +84,6 @@ Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を�
 
 ## ライセンス
 
+著作権者: 株式会社ピー・エム・シー ITソリューション事業部。
+
 AGPL v3（AGPL-3.0-or-later）。[LICENSE](LICENSE)、[NOTICE](NOTICE)、[第三者ライセンス](ThirdPartyNotices.txt) を参照してください。
