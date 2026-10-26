@@ -8,7 +8,7 @@ NLog 6.2.2 - BSD-3-Clause - https://github.com/NLog/NLog
 Microsoft.Data.SqlClient 7.1.1 - MIT - https://github.com/dotnet/SqlClient
 Npgsql 10.0.3 - PostgreSQL License - https://github.com/npgsql/npgsql
 MySqlConnector 2.6.2 - MIT - https://github.com/mysql-net/MySqlConnector
-System.Security.Cryptography.Pkcs 10.0.13 - MIT - https://www.nuget.org/packages/System.Security.Cryptography.Pkcs
+System.Security.Cryptography.Pkcs 10.0.14 - MIT - https://www.nuget.org/packages/System.Security.Cryptography.Pkcs
   (Pinned to a patched version; pulled in transitively by Microsoft.Data.SqlClient.)
 
 Development-only npm dependencies (not included in the distribution):
