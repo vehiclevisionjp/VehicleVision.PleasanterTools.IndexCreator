@@ -1,69 +1,63 @@
-# _reference（参考専用・AGPL）
+# _reference（参照専用・非追跡）
 
-`Implem.Pleasanter` は Pleasanter 本体（**GNU AGPL v3**）を **参考目的でのみ** サブモジュールとして
-配置したもの。**上流の `main` の先頭を追う**（2026-10-19 に、リリースタグへの固定から変えた）。コミットは固定して参照し、更新は自動 PR で進める。
+Pleasanter 本体（GNU AGPL v3）は AI の事実確認用に必要時だけ取得する。
+ソースは Git で追跡せず、CI でも取得しない。日次更新とポインタ更新 PR は廃止する。
 
-- リポジトリ: <https://github.com/Implem/Implem.Pleasanter>
-- 追従先: `main`（`.gitmodules` の `branch`）。**固定位置の正は、リポジトリが記録しているコミット**（`git ls-tree HEAD _reference/Implem.Pleasanter`）
-- 固定位置（2026-10-19 時点）: `1b7b6e6c`（`Pleasanter_1.5.9.0` と同じコミット）
+## 取得してから読む
+
+リポジトリ直下で実行する。既定の取得先は `_reference/Implem.Pleasanter`。
+
+```powershell
+bash scripts/sync-reference.sh
+```
+
+上流の [Implem/Implem.Pleasanter](https://github.com/Implem/Implem.Pleasanter) の
+`main` を shallow clone し、再実行時は fetch したコミットを detached HEAD で参照する。
+既存の未コミット変更・異なる取得元・空でない取得先などがあれば停止し、勝手に破棄しない。
+旧サブモジュールのフォルダや未コミット変更も削除せず、エラーを確認して別の取得先を使う。
+
+複数 clone で共有するときは、呼び出すプロセスだけに環境変数を設定する。
+指定先を直接読み、ローカルへのリンクは作らない。
+
+```powershell
+$env:PLEASANTER_REFERENCE_DIR = 'D:\references\Implem.Pleasanter'
+bash scripts/sync-reference.sh
+# 調査後は環境変数を解除する。共有先は削除しない。
+Remove-Item Env:PLEASANTER_REFERENCE_DIR
+```
+
+成功時は取得先の案内と SHA・コミット日・取得日時・版数の要約が表示される。
+成功時の状態は、同じコミットを再取得した場合も `Status=updated`。
+再現性の根拠には `FullSHA` または次のコマンドで確認した完全な SHA を使う。
+
+```powershell
+git -C $env:PLEASANTER_REFERENCE_DIR rev-parse HEAD
+```
+
+既定先の場合は `git -C _reference/Implem.Pleasanter rev-parse HEAD` で確認する。
+文書には完全な SHA、`https://github.com/Implem/Implem.Pleasanter/blob/<SHA>/<path>` の
+固定リンク、参照日を併記する。`main` はリリース前の変更を含むため、
+必要なら本体 csproj の `<Version>` とリリースタグとの対応も確認する。
+過去の確認結果の SHA を新しい SHA に書き換えるときは、対象ソースで再確認する。
+ソースの取得だけでは実機検証にならない。
 
 ## 厳守事項
 
-- **コードをコピー・流用・リンク・プロジェクト参照しない。** 本アプリは Pleasanter 本体を
-  改造せず、**標準 API を叩く別アプリ**として実装する
-- ここは **API 仕様・サイト設定のスキーマ・列定義・挙動の事実確認** にのみ使う
-- ビルド対象・配布物に含めない（ソリューションファイルにも入れない）
-- `_reference/` 配下を編集しないこと。サブモジュールの作業ツリーであり、本リポジトリの
-  コミットには乗らない
+- コードをコピー・流用・リンク・プロジェクト参照しない。
+  IndexCreator は本体アセンブリを参照せず、本体設定と利用者の DB を扱う独立 CLI。
+- ビルド・配布物・ソリューションに含めない。既定先・共有先の中身を編集しない。
+- API 仕様・サイト設定のスキーマ・列定義・挙動の事実確認だけに使う。
+- 実際の API 応答、DB の動作、実運用の設定や権限は実機で確認し、未検証なら明記する。
 
-> 本アプリは Pleasanter を**ネットワーク越しに API 利用するだけ**なので、本体の派生著作物には
-> ならない。**本体のコードを取り込んだ瞬間にこの前提が崩れる。**
-> 「どうせ AGPL 側があるのだから取り込んでよい」ではない。
+`bash scripts/reference-isolation-check.sh` は、プロジェクト参照・本体名前空間・取得先の混入を検査する。
+共有先を使うときは同じ `PLEASANTER_REFERENCE_DIR` を設定して検査する。
+利用者の本体フォルダ名を扱うアプリ固有の文字列は取り込みと区別して許容する。
 
-## 取得
+## 移行の根拠
 
-```bash
-git submodule update --init --recursive
-git config submodule.recurse true
-```
-
-**`submodule.recurse` を設定しておくこと**（クローンごとに 1 回）。追従 PR がマージされるたびに親のポインタが進むが、
-手元のサブモジュールの中身は、これが無いと古いまま残り、`pull` のあとに
-`modified: _reference/Implem.Pleasanter (new commits)` と差分が出る。設定しておけば、`pull`・`switch` のたびに
-サブモジュールの中身が、親が記録したコミットへ自動で合う。
-
-- **`.gitmodules` の `ignore = all` で隠さないこと。** 差分は消えるが、**中身が古いまま**で、
-  事実確認の根拠を取り違える（`git submodule status` の行頭に `+` が出る）
-- 全リポジトリへ効かせたいときは `git config --global submodule.recurse true`。ただし、サブモジュールが多い
-  リポジトリでは、`pull` のたびにサブモジュール側の処理が走り、時間がかかることがある（この点は未検証）
-
-## この submodule で確認できること
-
-| 対象 | 確認できること |
-| --- | --- |
-| `Implem.Pleasanter/Controllers/Api/ItemsController.cs` | 標準 API のエンドポイント一覧とルーティング |
-| `Implem.Pleasanter/Models/Results/ResultUtilities.cs`（`Get` の API 版） | 一覧取得の応答（`Response.Offset` / `PageSize` / `TotalCount` / `Data`）とページ上限の扱い |
-| `Implem.Pleasanter/Models/Issues/IssueApiModel.cs` | 記録テーブルの API 上の項目（`StartTime` / `CompletionTime` ほか） |
-| `Implem.Pleasanter/Libraries/Requests/Context.cs` | API キーの受け渡し方式（リクエストボディの `ApiKey`） |
-
-## 確認できないこと
-
-- **実際に API が返す JSON の中身**（日時の書式・タイムゾーン変換・未設定値）。**実機の応答で確認すること**
-- 実運用のテナント設定・権限
-
-## バージョン追随
-
-- **上流の `main` の先頭を追う。** コミットは固定して参照し、更新は日次の検査が出す追従 PR
-  （`.github/workflows/reference-submodule-update.yml`）で進める。Pleasanter 更新時は差分
-  （API 仕様・列定義・ランタイム版数）を確認し、必要な対応は
-  **自前実装側に取り込む**（本体コードは持ち込まない）
-- **`main` はリリース前の変更を含む。** 「どの版の事実か」は、**確認したコミットと `<Version>`**
-  （`Implem.Pleasanter/Implem.Pleasanter.csproj`）で言う。リリース版との対応は `Pleasanter_*` タグで確かめる
-
-```bash
-# main の先頭へ進める（作業ツリーのポインタが変わる。コミットは追従 PR に任せる）
-git submodule update --init --remote --depth 1 _reference/Implem.Pleasanter
-git -C _reference/Implem.Pleasanter log -1 --format='%h %ad' --date=short
-# どのリリースタグと同じコミットか
-git ls-remote --tags https://github.com/Implem/Implem.Pleasanter.git 'refs/tags/Pleasanter_*^{}'
-```
+参照日: 2026-10-27。
+[Template の配布手順](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.Template/blob/3312f003fbe9827090e20bc643800824bdf30e22/_documents/参照ソースのオンデマンド取得への配布手順.md)
+（採用コミット: `3312f003fbe9827090e20bc643800824bdf30e22`）に従う。
+背景は vehiclevisionjp/VehicleVision.PleasanterTools.Template#61・
+vehiclevisionjp/VehicleVision.PleasanterTools.Template#63。
+本体の実装仕様や過去の実機検証結果を更新する変更ではない。
