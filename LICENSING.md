@@ -1,8 +1,5 @@
 # ライセンスについて（デュアルライセンス）
 
-> ⚠️ **これは草案です。法務の確認を受けるまで、正式な提供条件として扱わないでください。**
-> 確認が済んだらこの但し書きを外してください。公開済みの版（v0.3.x）は、受け取った時点の AGPL-3.0-or-later のままです。
-
 対象ソフトウェアは **VehicleVision.PleasanterTools.IndexCreator**
 
 Copyright (C) PMC Co., Ltd. IT Solution Div.
@@ -44,9 +41,6 @@ SPDX 表記： `AGPL-3.0-or-later OR LicenseRef-PMC-Commercial`
 
 **お問い合わせ：** 株式会社ピー・エム・シー ITソリューション事業部
 （連絡先は [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md) を参照）
-
-> **要確認（法務）:** 「法人」に含める範囲（営利・非営利・官公庁・教育機関・個人事業主）と、
-> 商用ライセンスを契約できる相手の範囲は、この草案では確定していません。
 
 ## Pleasanter との関係（デュアルライセンスの前提）
 
