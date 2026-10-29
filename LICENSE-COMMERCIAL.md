@@ -56,4 +56,4 @@ Copyright (C) PMC Co., Ltd. IT Solution Div.
 
 株式会社ピー・エム・シー ITソリューション事業部
 
-> **未記入。** 正式な連絡先（部署・メールアドレス）を記載すること。
+お問い合わせは、次のページの連絡先からお願いします: [https://www.vehiclevision.jp/division/](https://www.vehiclevision.jp/division/)
