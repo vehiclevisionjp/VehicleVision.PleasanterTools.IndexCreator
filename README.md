@@ -29,7 +29,7 @@ nuget.org から dotnet tool として入れる配布も準備しています。
 
 ```powershell
 dotnet tool install -g VehicleVision.PleasanterTools.IndexCreator
-pleasanter-index-creator plan
+index-creator plan
 ```
 
 パッケージはフレームワーク依存で、実行には .NET Runtime 10 が必要です。SQL Server 向けの Windows ネイティブライブラリ（Microsoft.Data.SqlClient.SNI.runtime）が含まれ、その条件は [ライセンスについて](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/blob/master/LICENSING.md) の例外の節に従います。

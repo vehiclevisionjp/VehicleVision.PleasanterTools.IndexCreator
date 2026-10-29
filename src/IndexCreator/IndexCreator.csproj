@@ -16,7 +16,7 @@
        コマンド名とパッケージ ID の方針は _documents/リリース手順.md -->
   <PropertyGroup>
     <PackAsTool>true</PackAsTool>
-    <ToolCommandName>pleasanter-index-creator</ToolCommandName>
+    <ToolCommandName>index-creator</ToolCommandName>
     <PackageId>VehicleVision.PleasanterTools.IndexCreator</PackageId>
     <Description>Pleasanter のサイト構成から必要なインデックスを計画・作成・更新する dotnet tool。SQL Server・PostgreSQL・MySQL に対応。</Description>
     <PackageTags>pleasanter;vehiclevision;index;sqlserver;postgresql;mysql;dotnet-tool</PackageTags>
