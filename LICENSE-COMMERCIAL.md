@@ -1,8 +1,5 @@
 # 商用ライセンス（LicenseRef-PMC-Commercial）
 
-> ⚠️ **これは草案です。法務の確認を受けるまで、正式な提供条件として扱わないでください。**
-> 確認が済んだらこの但し書きを外してください。
-
 対象ソフトウェアは **VehicleVision.PleasanterTools.IndexCreator**
 
 Copyright (C) PMC Co., Ltd. IT Solution Div.
@@ -20,9 +17,6 @@ Copyright (C) PMC Co., Ltd. IT Solution Div.
 - 改変版のソースコードを公開せずに利用する
 - proprietary な製品・システムへ組み込む
 - 保守・サポート・SLA を契約に含める
-
-> **要確認（法務）:** 「法人」に含める範囲（営利・非営利・官公庁・教育機関・個人事業主）は、
-> この草案では確定していません。
 
 ## AGPL 版との違い
 
