@@ -86,7 +86,14 @@ Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を�
 
 著作権者: 株式会社ピー・エム・シー ITソリューション事業部。
 
-AGPL v3（AGPL-3.0-or-later）。[LICENSE](LICENSE)、[NOTICE](NOTICE)、[第三者ライセンス](ThirdPartyNotices.txt) を参照してください。
+**デュアルライセンス**で提供します（草案。法務の確認前）。詳細は [ライセンスについて](LICENSING.md) を参照してください。
+
+| | ライセンス | 想定する利用 |
+| --- | --- | --- |
+| A | [GNU AGPL v3 以降](LICENSE) | オープンソースとして利用・改変・再配布する場合 |
+| B | [株式会社ピー・エム・シー ITソリューション事業部の商用ライセンス](LICENSE-COMMERCIAL.md) | 法人が AGPL の義務を負わずに利用したい場合（個別契約） |
+
+依存の条件は [NOTICE](NOTICE) と [第三者ライセンス](ThirdPartyNotices.txt) を参照してください。
 
 貢献を取り込む前に [CLA（草案）](CLA.md) への署名が必要です。
 手続きは [貢献のしかた](CONTRIBUTING.md)、現在の提供条件は [ライセンスについて](LICENSING.md) を参照してください。
