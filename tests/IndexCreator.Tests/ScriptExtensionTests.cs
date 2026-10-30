@@ -22,7 +22,7 @@ internal static class ScriptExtensionTests
             await database.Execute($"INSERT INTO {table} VALUES (1,'fixture','ServerScript',{Literal(settings)},{Literal(body)},{enabled}), (2,'sql','Sql','{{\"OnSelectingWhere\":true}}','PRIVATE_SQL',{enabled}), (3,'disabled','ServerScript','invalid','invalid',{disabled}), (4,'style','Style','invalid','invalid',{enabled})");
             var entries = await database.ReadAnalysisExtensions(default);
             check(entries.Count == 2 && entries.Single(e => e.Type == "ServerScript").Settings.Get("Body").Text() == body, "Live table selects active analysis types and overrides Body");
-            var site = MutationSite("view.Filters.Status='100';");
+            var site = OrderedSite("view.Filters.Status='100,200';", "view.Filters.Status='100';");
             var inspection = ExtensionInventory.Inspect([site], entries);
             check(ViewMutationPlanner.Analyze([site], dbms, externalSites: inspection.UncertainSites).Indexes.Count == 0, "Live extensions block unproven mutation inference");
             check(inspection.Diagnostics.All(n => !n.Message.Contains("PRIVATE_SQL")), "Live SQL body not disclosed");
@@ -66,6 +66,14 @@ internal static class ScriptExtensionTests
             Views = new[] { new { ColumnFilterHash = new { Manager = "1", Status = "200" }, ColumnSorterHash = new { UpdatedTime = "desc" } } }
         }), 20000);
 
+    private static Site OrderedSite(params string[] bodies)
+    {
+        var site = MutationSite();
+        var settings = JsonNode.Parse(site.SiteSettings.GetRawText())!.AsObject();
+        settings["ServerScripts"] = JsonSerializer.SerializeToNode(bodies.Select((body, index) => new { Id = 100 - index, Body = body, WhenViewProcessing = true }));
+        return site with { SiteSettings = Json.Parse(settings.ToJsonString()) };
+    }
+
     public static void Run(Action<bool, string> check, Action<Action, string> reject)
     {
         var source = MutationSite();
@@ -77,6 +85,28 @@ internal static class ScriptExtensionTests
             check(ViewMutationPlanner.Analyze([source with { RecordCount = 1 }], db).Indexes.Count == 0, "Mutation threshold on " + db);
             check(ViewMutationPlanner.Analyze([source with { ReferenceType = "Issues" }], db).Indexes.All(i => i.Table == "Issues"), "Mutation targets Issues on " + db);
             check(ViewMutationPlanner.Analyze([source], db, externalSites: new HashSet<long> { 1 }).Indexes.Count == 0, "Extensions block mutation inference on " + db);
+            var bodies = new[] { "view.Filters.Status='100,200'; view.Sorters.UpdatedTime='desc';", "view.Filters.Status='100'; view.Sorters.UpdatedTime='asc';" };
+            var ordered = OrderedSite(bodies);
+            var multiPlan = ViewMutationPlanner.Analyze([ordered], db);
+            check(multiPlan.Indexes.Select(i => i.Signature).Order().SequenceEqual(plan.Indexes.Select(i => i.Signature).Order()), "Array order overrides earlier handlers, independent of Id on " + db);
+            var reversed = ViewMutationPlanner.Analyze([OrderedSite(bodies.Reverse().ToArray())], db);
+            var equivalentReverse = ViewMutationPlanner.Analyze([MutationSite(string.Join("\n", bodies.Reverse()))], db);
+            check(reversed.Indexes.Select(i => i.Signature).Order().SequenceEqual(equivalentReverse.Indexes.Select(i => i.Signature).Order()), "Reversed handlers match combined body on " + db);
+            check(!reversed.Indexes.Select(i => i.Signature).Order().SequenceEqual(multiPlan.Indexes.Select(i => i.Signature).Order()), "Changing handler order changes candidates on " + db);
+            check(ViewMutationPlanner.Analyze([OrderedSite(bodies[0], "unknown();")], db).Indexes.Count == 0, "Unresolved last handler discards entire inference on " + db);
+            check(ViewMutationPlanner.Analyze([OrderedSite("unknown();", bodies[1])], db).Indexes.Count == 0, "Unresolved first handler discards entire inference on " + db);
+            check(ViewMutationPlanner.Analyze([OrderedSite(bodies)], db, externalSites: new HashSet<long> { 1 }).Indexes.Count == 0, "Extensions still block multiple handlers on " + db);
+        }
+        check(ViewMutationPlanner.Analyze([OrderedSite("view.Filters.Status='100'", "(view.Sorters.UpdatedTime='asc');")], Dbms.SQLServer).Indexes.Count == 0, "Cross-script ASI call is not treated as independent assignments");
+        check(ViewMutationPlanner.Analyze([OrderedSite("view.Filters.Status='100'; // comment", "view.Sorters.UpdatedTime='asc';")], Dbms.SQLServer).Indexes.Count > 0, "Newline terminates cross-script line comment");
+        foreach (var wrapper in new[] { "TryCatch", "Functionalize" })
+        {
+            var wrapped = OrderedSite("view.Filters.Status='100';", "view.Sorters.UpdatedTime='asc';");
+            var node = JsonNode.Parse(wrapped.SiteSettings.GetRawText())!.AsObject();
+            node["ServerScripts"]![1]![wrapper] = true;
+            check(ViewMutationPlanner.Analyze([wrapped with { SiteSettings = Json.Parse(node.ToJsonString()) }], Dbms.SQLServer).Indexes.Count == 0, "Wrapper boundary requires review");
+            node["ServerScripts"]![1]!["Disabled"] = true;
+            check(ViewMutationPlanner.Analyze([wrapped with { SiteSettings = Json.Parse(node.ToJsonString()) }], Dbms.SQLServer).Indexes.Count > 0, "Disabled wrapped handler is ignored");
         }
         check(source.SiteSettings.Get("Views").Array().First().Get("ColumnSorterHash").Get("UpdatedTime").Text() == "desc", "Saved View remains unchanged");
         var negativeNode = JsonNode.Parse(source.SiteSettings.GetRawText())!.AsObject();
@@ -97,7 +127,7 @@ internal static class ScriptExtensionTests
         check(ViewMutationPlanner.Analyze([shared], Dbms.SQLServer).Indexes.Count == 0, "Shared code blocks View inference");
         sharedNode["ServerScripts"]!.AsArray()[1]!["Shared"] = false;
         sharedNode["ServerScripts"]!.AsArray()[1]!["WhenViewProcessing"] = true;
-        check(ViewMutationPlanner.Analyze([source with { SiteSettings = Json.Parse(sharedNode.ToJsonString()) }], Dbms.SQLServer).Indexes.Count == 0, "Multiple View handlers do not get combined");
+        check(ViewMutationPlanner.Analyze([source with { SiteSettings = Json.Parse(sharedNode.ToJsonString()) }], Dbms.SQLServer).Indexes.Count == 0, "Unknown second View handler prevents combination");
         sharedNode["ServerScriptsAllDisabled"] = true;
         check(ViewMutationPlanner.Analyze([source with { SiteSettings = Json.Parse(sharedNode.ToJsonString()) }], Dbms.SQLServer).Indexes.Count == 0, "Disabled site does not infer mutations");
 

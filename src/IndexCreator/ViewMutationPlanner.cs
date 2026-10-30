@@ -25,15 +25,17 @@ public static class ViewMutationPlanner
             {
                 continue;
             }
-            // 複数イベント本体・共有・Includeの実行順序を推測して合成しない。
-            if (scripts.Length != 1 || active.Any(s => s.Get("Shared").Bool() || s.Get("WhenloadingSiteSettings").Bool())
+            // サイト配列の順序は保持する。共有・Include・実行ラッパーの効果は推測しない。
+            if (active.Any(s => s.Get("Shared").Bool() || s.Get("WhenloadingSiteSettings").Bool())
+                || scripts.Length > 1 && scripts.Any(s => s.Get("Functionalize").Bool() || s.Get("TryCatch").Bool())
                 || scripts.Any(s => s.Get("Body").Text().Contains("//Include:", StringComparison.Ordinal))
                 || externalSites?.Contains(site.SiteId) == true)
             {
-                notes.Add(new(site.SiteId, "View mutations require review: multiple scripts, shared/include code or extensions may affect execution."));
+                notes.Add(new(site.SiteId, "View mutations require review: wrappers, shared/include code, settings-loading scripts or extensions may affect execution."));
                 continue;
             }
-            var updates = Resolve(scripts[0].Get("Body").Text());
+            // 改行で連結してから解析し、セミコロン省略によるスクリプト境界の作用も検査する。
+            var updates = Resolve(string.Join("\n", scripts.Select(s => s.Get("Body").Text())));
             if (updates == null || updates.Count == 0)
             {
                 notes.Add(new(site.SiteId, "View mutation body is not a complete sequence of literal assignments; no mutation candidate generated."));
