@@ -106,5 +106,5 @@ Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を�
 
 依存の条件は [NOTICE](NOTICE) と [第三者ライセンス](ThirdPartyNotices.txt) を参照してください。
 
-貢献を取り込む前に [CLA（草案）](CLA.md) への署名が必要です。
+貢献を取り込む前に [CLA](CLA.md) への署名が必要です。
 手続きは [貢献のしかた](CONTRIBUTING.md)、現在の提供条件は [ライセンスについて](LICENSING.md) を参照してください。
