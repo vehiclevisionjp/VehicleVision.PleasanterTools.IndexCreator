@@ -47,6 +47,16 @@ public static class ViewMutationPlanner
                 var changed = JsonNode.Parse(baseline.GetRawText())!.AsObject();
                 foreach (var update in updates.Where(u => u.Group != "Negatives"))
                 {
+                    if (update.Group == "ClearFilters")
+                    {
+                        changed["ColumnFilterHash"] = new JsonObject();
+                        changed["Search"] = "";
+                        foreach (var flag in new[] { "Incomplete", "Own", "NearCompletionTime", "Delay", "Overdue" })
+                        {
+                            changed[flag] = false;
+                        }
+                        continue;
+                    }
                     var hashName = update.Group switch
                     {
                         "Filters" => "ColumnFilterHash",
@@ -115,6 +125,17 @@ public static class ViewMutationPlanner
         var updates = new List<Update>();
         foreach (var statement in root.ChildNodes)
         {
+            if (statement is ExpressionStatement { Expression: CallExpression clear }
+                && clear.Callee is MemberExpression clearMethod && clearMethod.Object is Identifier { Name: "view" }
+                && Property(clearMethod) == "ClearFilters")
+            {
+                if (clear.Arguments.Count != 0)
+                {
+                    return null;
+                }
+                updates.Add(new("ClearFilters", "", ""));
+                continue;
+            }
             if (statement is ExpressionStatement { Expression: CallExpression call }
                 && call.Callee is MemberExpression method && method.Object is Identifier { Name: "view" }
                 && Property(method) == "FilterNegative")

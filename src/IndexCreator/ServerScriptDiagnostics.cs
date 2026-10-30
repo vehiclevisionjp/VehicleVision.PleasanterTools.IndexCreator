@@ -61,9 +61,9 @@ public static class ServerScriptDiagnostics
                         message = "Possible items.Get call; resolve the target and View at runtime before planning indexes.";
                     }
                     if (node is CallExpression { Callee: MemberExpression viewCall } && viewCall.Object is Identifier { Name: "view" }
-                        && Property(viewCall) == "FilterNegative")
+                        && Property(viewCall) is "FilterNegative" or "ClearFilters")
                     {
-                        message = "Possible view.FilterNegative call; runtime scope and arguments require review.";
+                        message = $"Possible view.{Property(viewCall)} call; runtime scope and arguments require review.";
                     }
                     if (node is ObjectProperty property && Name(property.Key) is "ColumnFilterHash" or "ColumnSorterHash")
                     {
