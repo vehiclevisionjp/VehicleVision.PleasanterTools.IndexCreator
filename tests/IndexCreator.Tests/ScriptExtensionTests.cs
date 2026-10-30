@@ -22,7 +22,7 @@ internal static class ScriptExtensionTests
             await database.Execute($"INSERT INTO {table} VALUES (1,'fixture','ServerScript',{Literal(settings)},{Literal(body)},{enabled}), (2,'sql','Sql','{{\"OnSelectingWhere\":true}}','PRIVATE_SQL',{enabled}), (3,'disabled','ServerScript','invalid','invalid',{disabled}), (4,'style','Style','invalid','invalid',{enabled})");
             var entries = await database.ReadAnalysisExtensions(default);
             check(entries.Count == 2 && entries.Single(e => e.Type == "ServerScript").Settings.Get("Body").Text() == body, "Live table selects active analysis types and overrides Body");
-            var site = OrderedSite("view.Filters.Status='100,200';", "view.Filters.Status='100';");
+            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "view.Filters.Status='100'; view.FilterNegative('Status',false);");
             var inspection = ExtensionInventory.Inspect([site], entries);
             check(ViewMutationPlanner.Analyze([site], dbms, externalSites: inspection.UncertainSites).Indexes.Count == 0, "Live extensions block unproven mutation inference");
             check(inspection.Diagnostics.All(n => !n.Message.Contains("PRIVATE_SQL")), "Live SQL body not disclosed");
@@ -94,6 +94,19 @@ internal static class ScriptExtensionTests
         var source = MutationSite();
         foreach (var db in Enum.GetValues<Dbms>())
         {
+            foreach (var body in new[] { "view.Filters.Status='100'; view.FilterNegative('Status');", "view.FilterNegative('Status',true); view.Filters.Status='100';", "view.Filters.Status='100'; view['FilterNegative']('Status',true);" })
+            {
+                check(ViewMutationPlanner.Analyze([MutationSite(body)], db).Indexes.All(i => i.Keys.All(k => k.Column != "Status")), "Explicit negation excludes key regardless of filter assignment order on " + db);
+            }
+            var negativeSite = MutationSite("view.FilterNegative('Status',false);");
+            var negativeSettings = JsonNode.Parse(negativeSite.SiteSettings.GetRawText())!.AsObject();
+            negativeSettings["Views"]![0]!["ColumnFilterNegatives"] = new JsonArray("Status", "Manager");
+            var cleared = ViewMutationPlanner.Analyze([negativeSite with { SiteSettings = Json.Parse(negativeSettings.ToJsonString()) }], db);
+            check(cleared.Indexes.Any(i => i.Keys.Any(k => k.Column == "Status")) && cleared.Indexes.All(i => i.Keys.All(k => k.Column != "Manager")), "False clears only specified saved negation on " + db);
+            var clearedLast = OrderedSite("view.FilterNegative('Status');", "view.FilterNegative('Status',false);");
+            check(ViewMutationPlanner.Analyze([clearedLast], db).Indexes.Any(i => i.Keys.Any(k => k.Column == "Status")), "Later false wins across handlers on " + db);
+            var setLast = OrderedSite("view.FilterNegative('Status',false);", "view.FilterNegative('Status');");
+            check(ViewMutationPlanner.Analyze([setLast], db).Indexes.All(i => i.Keys.All(k => k.Column != "Status")), "Later true wins across handlers on " + db);
             foreach (var value in new[] { "'ExactMatch'", "'ExactMatchMultiple'", "2", "12", "'2'", "'12'" })
             {
                 check(ViewMutationPlanner.Analyze([SearchSite(value)], db).Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")), "SearchTypes exact override creates a key on " + db);
@@ -127,6 +140,12 @@ internal static class ScriptExtensionTests
             check(ViewMutationPlanner.Analyze([OrderedSite("unknown();", bodies[1])], db).Indexes.Count == 0, "Unresolved first handler discards entire inference on " + db);
             check(ViewMutationPlanner.Analyze([OrderedSite(bodies)], db, externalSites: new HashSet<long> { 1 }).Indexes.Count == 0, "Extensions still block multiple handlers on " + db);
         }
+        foreach (var unsupportedNegative in new[] { "view.FilterNegative();", "view.FilterNegative(column);", "view.FilterNegative('Status',context.Flag);", "view.FilterNegative('Status','false');", "view.FilterNegative('Status',0);", "view.FilterNegative('Status',true,false);", "view.FilterNegative('PRIVATE_KEY');", "other.FilterNegative('Status');" })
+        {
+            var result = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100';" + unsupportedNegative)], Dbms.SQLServer);
+            check(result.Indexes.Count == 0 && result.Diagnostics.All(n => !n.Message.Contains("PRIVATE_KEY")), "Unsupported negative call discards whole inference without leaking arguments");
+        }
+        check(ServerScriptDiagnostics.Analyze([MutationSite("view.FilterNegative('PRIVATE_KEY',secret);")]).Any(n => n.Message.Contains("FilterNegative")) && ServerScriptDiagnostics.Analyze([MutationSite("view.FilterNegative('PRIVATE_KEY',secret);")]).All(n => !n.Message.Contains("PRIVATE_KEY")), "Negative call is diagnosed without exposing arguments");
         foreach (var unsupported in new[] { "'UNKNOWN_PRIVATE_VALUE'", "0", "4", "2.5", "true", "null", "context.UserId" })
         {
             var result = ViewMutationPlanner.Analyze([SearchSite(unsupported)], Dbms.SQLServer);

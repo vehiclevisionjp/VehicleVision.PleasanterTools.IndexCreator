@@ -60,6 +60,11 @@ public static class ServerScriptDiagnostics
                     {
                         message = "Possible items.Get call; resolve the target and View at runtime before planning indexes.";
                     }
+                    if (node is CallExpression { Callee: MemberExpression viewCall } && viewCall.Object is Identifier { Name: "view" }
+                        && Property(viewCall) == "FilterNegative")
+                    {
+                        message = "Possible view.FilterNegative call; runtime scope and arguments require review.";
+                    }
                     if (node is ObjectProperty property && Name(property.Key) is "ColumnFilterHash" or "ColumnSorterHash")
                     {
                         message = property.Value is ObjectExpression obj
