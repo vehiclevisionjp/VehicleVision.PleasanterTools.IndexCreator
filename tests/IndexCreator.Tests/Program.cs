@@ -1,23 +1,134 @@
 using VehicleVision.PleasanterTools.IndexCreator;
 
+try
+{
 var passed = 0;
 void Check(bool condition, string name)
 {
-    if (!condition) throw new Exception("FAIL: " + name);
+    if (!condition)
+    {
+        Console.Error.WriteLine("FAIL: " + name);
+        throw new Exception("FAIL: " + name);
+    }
+
     passed++;
 }
 void Reject(Action action, string name)
 {
     try { action(); } catch (UserError) { passed++; return; }
+    Console.Error.WriteLine("FAIL: " + name);
     throw new Exception("FAIL: " + name);
 }
 Site SiteWith(string settings, long count = 20000, string table = "Results") => new(1, table, Json.Parse(settings), count);
 Analysis Plan(Dbms db, string settings) => new Planner(db).Analyze([SiteWith(settings)]);
+IReadOnlyList<Diagnostic> ScriptNotes(string body, bool disabled = false) => ServerScriptDiagnostics.Analyze([SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = body, Disabled = disabled } } }))]);
+Check(ScriptNotes("// items.Get(1)\nconst text='view.Filters.ClassA=1';").Count == 0, "Script comments and strings are not calls");
+Check(ScriptNotes("view.Filters.ClassA = secret;").Single().Message.Contains("ClassA"), "Dynamic filter values retain column evidence");
+Check(ScriptNotes("view['Sorters']['NumA']='desc';").Single().Message.Contains("Sorters"), "Literal bracket sorter syntax");
+Check(ScriptNotes("view.Filters[column] = secret;").Single().Message.Contains("dynamic/unsupported"), "Computed column remains unresolved");
+Check(ScriptNotes("const data={View:{ColumnFilterHash:{CheckB:'PRIVATE_VALUE'},ColumnSorterHash:{ClassA:'asc'}}}; items.Get(10,JSON.stringify(data));").Count == 4, "Query declarations, calls and resolved target diagnosed separately");
+IReadOnlyList<ScriptQuery> ResolveScript(string body) => ScriptQueryResolver.Resolve(new Acornima.Parser().ParseScript(body));
+var literalQuery = "let data={View:{ColumnFilterHash:{CheckB:'true'},ColumnSorterHash:{ClassA:'asc'}}}; let records=items.Get(10,JSON.stringify(data));";
+var scriptSource = SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = literalQuery } } }), 1) with { SiteId = 99 };
+var scriptTarget = SiteWith("{}") with { SiteId = 10 };
+var standaloneQuery = literalQuery.Replace("let records=", "");
+var literalJson = """{"View":{"ColumnFilterHash":{"CheckB":"true"},"ColumnSorterHash":{"ClassA":"asc"}}}""";
+string JsonStringQuery(string json) => "items.Get(10," + System.Text.Json.JsonSerializer.Serialize(json) + ");";
+var jsonStringQuery = JsonStringQuery(literalJson);
+var jsonStringSource = scriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = jsonStringQuery } } })) };
+var standaloneSource = scriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = standaloneQuery } } })) };
+var disabledSource = scriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { ServerScriptsAllDisabled = true, ServerScripts = new[] { new { Body = literalQuery }, new { Body = "invalid {" } } })) };
+Check(ServerScriptDiagnostics.Analyze([disabledSource]).Count == 0, "Site-wide disabled scripts are not parsed or diagnosed");
+foreach (var scriptDb in new[] { Dbms.SQLServer, Dbms.PostgreSQL, Dbms.MySQL })
+{
+    var scriptPlan = ScriptQueryPlanner.Analyze([scriptSource, scriptTarget], scriptDb);
+    Check(scriptPlan.Indexes.Single().SiteId == 10 && scriptPlan.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(new[] { "SiteId", "CheckB" }), "Script candidates use target, not source; wrapped sort excluded");
+    Check(ScriptQueryPlanner.Analyze([standaloneSource, scriptTarget], scriptDb).Indexes.Single().Signature == scriptPlan.Indexes.Single().Signature, "Standalone query has the same candidate on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([jsonStringSource, scriptTarget], scriptDb).Indexes.Single().Signature == scriptPlan.Indexes.Single().Signature, "Literal JSON has the same candidate on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([jsonStringSource, scriptTarget with { ReferenceType = "Issues" }], scriptDb).Indexes.Single().Table == "Issues", "Literal JSON also targets Issues on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([jsonStringSource, scriptTarget with { RecordCount = 1 }], scriptDb).Indexes.Count == 0, "Literal JSON respects target threshold on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([disabledSource, scriptTarget], scriptDb).Indexes.Count == 0, "Site-wide disabled scripts produce no candidates on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([standaloneSource, scriptTarget with { RecordCount = 1 }], scriptDb).Indexes.Count == 0, "Standalone query respects threshold on " + scriptDb);
+}
+Check(ResolveScript(standaloneQuery).Count == 1, "Standalone Get resolved");
+Check(ResolveScript(jsonStringQuery).Single().View.Get("ColumnFilterHash").Get("CheckB").Text() == "true", "Literal JSON survives parser document disposal");
+Check(ResolveScript("let records=" + jsonStringQuery).Count == 1, "Literal JSON in variable initializer resolved");
+Check(ResolveScript("const request=" + System.Text.Json.JsonSerializer.Serialize(literalJson) + "; items.Get(10,request);").Count == 1, "Literal JSON string variable resolved");
+Check(ResolveScript("try {" + jsonStringQuery + "} catch(e){}").Count == 1, "Literal JSON in whole-script try resolved");
+foreach (var invalidJson in new[] { "invalid PRIVATE_VALUE", "[]", "null", "{}", "{\"View\":null}", "{\"View\":[]}", "{\"View\":{},\"View\":{}}", "{\"View\":{},\"view\":{}}", "{\"View\":{\"ColumnFilterHash\":{\"Status\":\"100\",\"Status\":\"200\"}}}", "{\"View\":{\"ColumnFilterHash\":{\"Status\":\"100\",\"status\":\"200\"}}}", "{\"View\":{},}", "{/*comment*/\"View\":{}}" })
+{
+    Check(ResolveScript(JsonStringQuery(invalidJson)).Count == 0, "Invalid or ambiguous JSON does not resolve");
+}
+Check(ResolveScript("unknown();" + jsonStringQuery).Count == 0, "Literal JSON does not bypass prior effects");
+Check(ResolveScript("const request=" + System.Text.Json.JsonSerializer.Serialize(literalJson) + "; request=other; items.Get(10,request);").Count == 0, "Reassigned JSON string does not resolve");
+Check(ResolveScript("items.Get(10,context.Request); ").Count == 0, "Runtime JSON string does not resolve");
+Check(ScriptNotes(JsonStringQuery("invalid PRIVATE_VALUE")).All(d => !d.Message.Contains("PRIVATE_VALUE")), "Malformed JSON does not leak parser input");
+Check(ScriptNotes(JsonStringQuery("{\"View\":{\"ColumnFilterHash\":{\"ClassA\":\"PRIVATE_VALUE\"}}}")).All(d => !d.Message.Contains("PRIVATE_VALUE")), "Resolved JSON does not leak filter values");
+Check(ResolveScript("try {" + standaloneQuery + "} catch(e){}").Count == 1, "Standalone Get in whole-script try resolved");
+Check(ResolveScript("items.Get(10,JSON.stringify({View:{ColumnFilterHash:{Status:'100'}}}));").Count == 1, "Standalone inline View resolved");
+foreach (var standalonePrefix in new[] { "unknown();", "if(context.Id){}", "const items=other;", "const JSON=other;" })
+{
+    Check(ResolveScript(standalonePrefix + standaloneQuery).Count == 0, "Standalone query does not bypass effects or shadowing");
+}
+Check(ResolveScript(standaloneQuery.Replace("items.Get", "other.Get")).Count == 0, "Other standalone API is not a query");
+Check(ResolveScript(standaloneQuery.Replace("items.Get", "unknown(); items.Get")).Count == 0, "Unknown call after declarations stops resolution");
+Check(ResolveScript(standaloneQuery + "items.Get(20,JSON.stringify(data));").Count == 1, "Standalone query stops before subsequent calls");
+Check(ResolveScript(standaloneQuery.Replace("Get(10,", "Get(context.Id,")).Count == 0, "Standalone dynamic target remains unresolved");
+Check(ScriptQueryPlanner.Analyze([scriptSource], Dbms.SQLServer).Indexes.Count == 0, "Missing target never invents an index");
+Check(ScriptQueryPlanner.Analyze([scriptSource, scriptTarget with { RecordCount = 1 }], Dbms.SQLServer).Indexes.Count == 0, "Target threshold respected");
+Check(ScriptQueryPlanner.Analyze([scriptSource, scriptTarget with { RecordCount = 1 }], Dbms.SQLServer, 0).Indexes.Count == 1, "Explicit lower threshold enables target candidate");
+Check(ScriptQueryPlanner.Analyze([scriptSource, scriptSource with { SiteId = 98 }, scriptTarget], Dbms.SQLServer).Indexes.Count == 1, "Duplicate script queries compacted");
+Check(!Options.Parse(["plan"]).IncludeScriptQueries && Options.Parse(["plan", "/include-script-queries"]).IncludeScriptQueries, "Script planning is opt-in");
+Reject(() => Options.Parse(["_rds", "/include-script-queries"]), "Script candidates cannot be automatically applied");
+Reject(() => Options.Parse(["plan", "/include-script-queries", "/prune"]), "Partial script analysis cannot drive pruning");
+Check(ResolveScript(literalQuery).Single().TargetSiteId == 10, "Literal query resolves target site");
+Check(ResolveScript("try {" + literalQuery + "} catch(e){}").Count == 1, "Whole-script try wrapper supported");
+Check(ResolveScript("unknown(); try {" + literalQuery + "} catch(e){}").Count == 0, "Prior side effects before try rejected");
+Check(ResolveScript(literalQuery).Single().View.Get("ColumnFilterHash").Get("CheckB").Text() == "true", "Literal view retained structurally");
+Check(ResolveScript("const target=10;" + literalQuery.Replace("Get(10,", "Get(target,")).Count == 1, "Scalar target variable resolved");
+foreach (var scriptPrefix in new[] { "unknown();", "if(context.Id){}", "const items=other;", "const JSON=other;", "const {items}=other;" })
+{
+    Check(ResolveScript(scriptPrefix + literalQuery).Count == 0, "Unknown effects or bindings do not resolve query");
+}
+Check(ResolveScript(literalQuery.Replace("let records=", "data.View.ColumnFilterHash.CheckB='false'; let records=")).Count == 0, "Mutation invalidates literal query");
+Check(ResolveScript(literalQuery + "class items {}").Count == 0, "Later lexical API shadow rejected");
+Check(ResolveScript(literalQuery.Replace("'true'", "context.UserId")).Count == 0, "Runtime values not resolved");
+Check(ResolveScript(literalQuery.Replace("CheckB:'true'", "...other")).Count == 0, "Object spread not resolved");
+Check(ResolveScript(literalQuery.Replace("CheckB:'true'", "get CheckB(){return 'true'}")).Count == 0, "Getter never evaluated");
+Check(ResolveScript(literalQuery.Replace("Get(10,", "Get(10.5,")).Count == 0, "Fractional target rejected");
+Check(ScriptNotes("const data={ColumnFilterHash:{'PRIVATE_KEY':'PRIVATE_VALUE'}};").All(d => !d.Message.Contains("PRIVATE")), "Arbitrary keys and values are not logged");
+Check(ScriptNotes("invalid {", true).Count == 0, "Disabled script skipped");
+Reject(() => ScriptNotes("invalid {"), "Malformed script stops analysis");
+Check(ScriptNotes("if (context.Id) return; items.Get(model.ClassA);").Count == 1, "Top-level return supported without execution");
+Check(ScriptNotes("function f(items){items.Get(1);}").Single().Message.Contains("Possible"), "Shadowed API is not asserted as definite use");
 
 Check(Plan(Dbms.SQLServer, "{}").Indexes.Count == 1, "SQL Server default sort");
 Check(Plan(Dbms.MySQL, "{}").Indexes.Count == 1, "MySQL default sort");
 Check(Plan(Dbms.PostgreSQL, "{}").Indexes.Count == 0, "PostgreSQL primary key covers default sort");
 Check(new Planner(Dbms.SQLServer).Analyze([SiteWith("{}", 9999)]).Indexes.Count == 0, "Minimum record threshold");
+var smallLookupSites = new[] { SiteWith("{}", 1) with { SiteId = 10 }, SiteWith("{}", 0) with { SiteId = 20 } };
+var idLookupPlan = RecordIdLookupPlanner.Complete(new Planner(Dbms.SQLServer).Analyze(smallLookupSites), smallLookupSites);
+Check(idLookupPlan.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["ResultId"]), "Record lookup bypasses per-site record threshold");
+Check(idLookupPlan.Indexes.Single().SiteId == 10, "Record lookup shared by table uses lowest source site");
+Check(RecordIdLookupPlanner.Complete(idLookupPlan, smallLookupSites.Reverse().ToArray()).Indexes.Single().Name == idLookupPlan.Indexes.Single().Name, "Lookup completion is idempotent and source-order independent");
+foreach (var table in new[] { "Results", "Issues", "Wikis" })
+{
+    var lookupSite = SiteWith("{}", 0, table);
+    var lookup = RecordIdLookupPlanner.Complete(new([], []), [lookupSite]).Indexes.Single();
+    Check(lookup.Keys.Single().Column == table[..^1] + "Id", "Record lookup identifier maps " + table);
+    var standardLookup = new ExistingIndex(table, "standard_id", [new(table[..^1] + "Id")]);
+    var keptLookup = Reconciler.Plan([lookup], [standardLookup], true);
+    Check(keptLookup.Single().Kind == ChangeKind.Keep && keptLookup.Single().Name == "standard_id", "Standard lookup covers supplemental candidate " + table);
+    var createdLookup = new ExistingIndex(table, lookup.Name, lookup.Keys);
+    Check(Reconciler.Plan([lookup], [createdLookup], true).Single().Kind == ChangeKind.Keep, "Lookup survives subsequent apply with prune " + table);
+    Check(Reconciler.Plan([lookup], [standardLookup with { Valid = false }], false).Single().Kind == ChangeKind.Create, "Disabled standard lookup does not hide missing coverage " + table);
+    Check(Reconciler.Plan([lookup], [standardLookup with { Plain = false }], false).Single().Kind == ChangeKind.Create, "Filtered lookup does not cover all record IDs " + table);
+    Check(!new SqlDialect(Dbms.SQLServer, "dbo").Create(lookup).Contains("UNIQUE", StringComparison.Ordinal), "Lookup DDL does not restore a uniqueness constraint " + table);
+}
+Check(RecordIdLookupPlanner.Complete(new([], []), []).Indexes.Count == 0, "Empty database adds no invented table lookup");
+var siteLeading = new ExistingIndex("Results", "site_then_id", [new("SiteId"), new("ResultId")]);
+Check(Reconciler.Plan(idLookupPlan.Indexes, [siteLeading], false).Single().Kind == ChangeKind.Create, "Site-first index cannot cover ID-only lookup");
+Check(RecordIdLookupPlanner.Complete(new([], []), [SiteWith("{}") with { ReferenceType = "Sites" }]).Indexes.Count == 0, "Lookup completion does not manage Sites or Items");
 var filtered = """
     {"Columns":[{"ColumnName":"ClassA","ChoicesText":"A\nB"},{"ColumnName":"NumA","Nullable":true}],
      "Views":[{"ColumnFilterHash":{"ClassA":"A"},"ColumnSorterHash":{"NumA":"desc"}}]}
@@ -78,6 +189,10 @@ var multiTarget = relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{
 Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, multiTarget]).Indexes.All(i => i.Keys.Count == 2), "Multiple selection relation adds no record-ID covering candidate");
 Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, relatingTarget with { RecordCount = 1 }]).Diagnostics.Any(d => d.Message.Contains("below the minimum record threshold", StringComparison.Ordinal)), "Small relation master explains omission");
 Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource]).Diagnostics.Any(d => d.Message.Contains("target site 20 is unavailable", StringComparison.Ordinal)), "Unavailable relation master is diagnosed");
+var missingRelationLink = relatingSource with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30}],"RelatingColumns":[{"Columns":["ClassA","ClassB"]}]}""") };
+Check(new Planner(Dbms.PostgreSQL).Analyze([missingRelationLink]).Diagnostics.Any(d => d.Message.Contains("link settings are missing", StringComparison.Ordinal)), "Missing relation child is diagnosed instead of throwing on undefined JSON");
+var userTableLink = SiteWith("""{"Links":[{"TableName":"Users","ColumnName":"Owner","View":{"ColumnFilterHash":{"Disabled":"false"}}}]}""");
+Check(new Planner(Dbms.SQLServer).Analyze([userTableLink]).Indexes.Count == 1, "Non-site user choice does not require numeric SiteId");
 var orderedTarget = relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30},{"ColumnName":"ClassB","SiteId":30}],"EditorColumnHash":{"General":["ClassB","ClassA"]}}""") };
 Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, orderedTarget]).Indexes.Any(i => i.Keys.Select(k => k.Column).SequenceEqual(["SiteId", "ClassB", "IssueId"])), "Relation uses child master editor order rather than Links order");
 var ambiguousTarget = relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30},{"ColumnName":"ClassB","SiteId":30}]}""") };
@@ -92,7 +207,10 @@ Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, relatingTarget with 
 Reject(() => Plan(Dbms.PostgreSQL, """{"RelatingColumns":[{"Columns":"ClassA"}]}"""), "Malformed relation fails closed");
 Reject(() => Plan(Dbms.PostgreSQL, """{"Links":[{"SiteId":20,"View":{"ColumnFilterHash":[]}}]}"""), "Malformed linked view fails before target lookup");
 Reject(() => Plan(Dbms.PostgreSQL, """{"EditorColumnHash":{"General":"ClassA"}}"""), "Malformed editor order fails closed");
-Check(Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterExpressions":[{"ColumnName":"ClassA"}]}]}""").Diagnostics.Any(d => d.Message.Contains("ColumnFilterExpressions", StringComparison.Ordinal)), "Expression filters report unsupported planning");
+Check(Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterExpressions":{"ClassA":"[ClassB]"}}]}""").Diagnostics.Any(d => d.Message.Contains("ColumnFilterExpressions", StringComparison.Ordinal)), "Expression filter dictionary reports unsupported planning");
+Reject(() => Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterExpressions":[]}]}"""), "Expression filter arrays do not match Pleasanter view dictionaries");
+var expressionLink = linkSource with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":20,"View":{"ColumnFilterExpressions":{"ClassA":"[ClassB]"}}}]}""") };
+Check(new Planner(Dbms.PostgreSQL).Analyze([expressionLink, linkTarget]).Diagnostics.Any(d => d.Message.Contains("ColumnFilterExpressions", StringComparison.Ordinal)), "Linked choice expression dictionary is accepted and diagnosed");
 Check(!Plan(Dbms.SQLServer, """{"Columns":[{"ColumnName":"ClassA","ChoicesText":"A"}],"Views":[{"ColumnFilterHash":{"ClassA":"A"},"ColumnFilterNegatives":["ClassA"]}]}""").Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")), "Negative filters excluded");
 Check(Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterHash":{"and_1":"{\"Status\":\"[100]\"}"}}]}""").Indexes.Single().Keys[1].Column == "Status", "Nested AND filters");
 Check(!Plan(Dbms.SQLServer, """{"Views":[{"ColumnFilterHash":{"ClassA~2,ClassB":"A"}}]}""").Indexes.Any(i => i.Keys.Any(k => k.Column.Contains('~'))), "Joined filters excluded");
@@ -116,6 +234,8 @@ Check(Reconciler.Plan([], [existing], true).Single().Kind == ChangeKind.Drop, "O
 var shorter = new IndexSpec("Results", [new("SiteId"), new("ClassA")]);
 var reconciliation = Reconciler.Plan([shorter], [existing], true);
 Check(reconciliation[0].Kind == ChangeKind.Create && reconciliation[1].Kind == ChangeKind.Drop, "Replace owned covering index before prune");
+Check(Reconciler.Plan([shorter], [existing], false).Single().Kind == ChangeKind.Keep, "Existing wider managed index prevents duplicate when prune is off");
+Check(Reconciler.Plan([shorter], [existing with { Valid = false }], false).Single().Kind == ChangeKind.Create, "Invalid wider managed index cannot replace a valid candidate");
 Check(Reconciler.Plan([spec], [existing], false, true).Single().Kind == ChangeKind.Repair, "Force rebuild only owned matching index");
 Check(Reconciler.Plan([spec], [existing with { Name = "standard" }], false, true).Single().Kind == ChangeKind.Keep, "Force preserves standard index");
 var slash = Options.Parse(["_rds", "/p", "/opt/pleasanter app/Implem.Pleasanter", "/y"]);
@@ -232,7 +352,7 @@ Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", wikiLink)], [new Sit
 var secondWiki = new Site(32, "Wikis", Json.Parse("{}"), 0, "Second");
 var twoLinks = new ChoicePlanner().Generate([Linked("[[32]]\n[[30]]", """[{"ColumnName":"ClassA","SiteId":32},{"ColumnName":"ClassA","SiteId":30}]""")], [wikiMaster, secondWiki]).Single();
 Check(twoLinks.WikiSources!.SequenceEqual([new WikiChoiceSource(1, 32), new WikiChoiceSource(2, 30)]), "Multiple Wiki links keep the Links order");
-Check(new ChoicePlanner().Generate([Linked("""[{"SiteId":30,"View":{"ColumnFilterExpressions":[]}}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]).Single().WikiSources!.Single().SiteId == 30, "JSON notation with extra settings still expands the Wiki body");
+Check(new ChoicePlanner().Generate([Linked("""[{"SiteId":30,"View":{"ColumnFilterExpressions":{}}}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]).Single().WikiSources!.Single().SiteId == 30, "JSON notation with extra settings still expands the Wiki body");
 Reject(() => new ChoicePlanner().Generate([Linked("""[{"SiteId":30}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [new Site(30, "Results", Json.Parse("{}"), 0, "Table")]), "JSON-format links to tables stop");
 Check(new ChoicePlanner().Generate([Linked("""[{"SiteId":32},{"SiteId":30}]""", """[{"ColumnName":"ClassA","SiteId":32,"JsonFormat":true},{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster, secondWiki]).Single().WikiSources!.Select(w => w.SiteId).SequenceEqual([32L, 30L]), "JSON-format links keep the Links order");
 Reject(() => new ChoicePlanner().Generate([Linked("""[{"SiteId":30}]""", "[]")], [wikiMaster]), "JSON notation without Links is not read as a plain choice");
@@ -243,22 +363,39 @@ if (args.Contains("--integration"))
 {
     var dbName = Environment.GetEnvironmentVariable("INDEXCREATOR_TEST_DBMS");
     var cs = Environment.GetEnvironmentVariable("INDEXCREATOR_TEST_CONNECTION");
-    if (!Enum.TryParse<Dbms>(dbName, out var dbms) || string.IsNullOrWhiteSpace(cs)) throw new Exception("Integration requires INDEXCREATOR_TEST_DBMS and INDEXCREATOR_TEST_CONNECTION.");
+    if (!Enum.TryParse<Dbms>(dbName, out var dbms) || string.IsNullOrWhiteSpace(cs))
+    {
+        throw new Exception("Integration requires INDEXCREATOR_TEST_DBMS and INDEXCREATOR_TEST_CONNECTION.");
+    }
+
     var target = new System.Data.Common.DbConnectionStringBuilder { ConnectionString = cs };
-    if (!target.ContainsKey("Database") || target["Database"].ToString() != "IndexCreatorTest") throw new Exception("Integration only accepts the dedicated IndexCreatorTest database.");
+    if (!target.ContainsKey("Database") || target["Database"].ToString() != "IndexCreatorTest")
+    {
+        throw new Exception("Integration only accepts the dedicated IndexCreatorTest database.");
+    }
     // 専用検証 DB だけを使用。実運用 DB を渡さないこと。
     var schema = dbms == Dbms.SQLServer ? "dbo" : "IndexCreatorTest";
     var configuration = new Configuration(dbms, schema, cs, true, 120);
     await using var database = new Database(configuration);
     await database.Open(default);
     var d = new SqlDialect(dbms, schema);
-    if (dbms == Dbms.PostgreSQL) await database.Execute($"CREATE SCHEMA IF NOT EXISTS {d.Quote(schema)}");
+    if (dbms == Dbms.PostgreSQL)
+    {
+        await database.Execute($"CREATE SCHEMA IF NOT EXISTS {d.Quote(schema)}");
+    }
     // 本体の MySQL は utf8mb4_general_ci で DB を作る（Definitions/Sqls/MySQL/CreateDatabase.sql）。
-    if (dbms == Dbms.MySQL) await database.Execute("ALTER DATABASE `IndexCreatorTest` COLLATE utf8mb4_general_ci");
+    if (dbms == Dbms.MySQL)
+    {
+        await database.Execute("ALTER DATABASE `IndexCreatorTest` COLLATE utf8mb4_general_ci");
+    }
+
     var str = dbms switch { Dbms.SQLServer => "nvarchar(max)", Dbms.MySQL => "longtext", _ => "text" };
     var classType = dbms switch { Dbms.SQLServer => "nvarchar(1024)", Dbms.PostgreSQL => "varchar(1024)", _ => "text" };
     foreach (var table in new[] { "Results", "Issues", "Wikis" })
+    {
         await database.Execute($"CREATE TABLE {d.Table(table)} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote(table[..^1] + "Id")} bigint NOT NULL, {d.Quote("UpdatedTime")} timestamp NOT NULL, {d.Quote("ClassA")} {classType}, {d.Quote("ClassB")} {classType}, {d.Quote("Status")} int, {d.Quote("Manager")} int NOT NULL DEFAULT 0, {d.Quote("Owner")} int NOT NULL DEFAULT 0, {d.Quote("DateA")} timestamp NULL, {d.Quote("DateB")} timestamp NULL{(table == "Issues" ? $", {d.Quote("CompletionTime")} timestamp NULL" : "")}{(table == "Wikis" ? $", {d.Quote("Body")} {str}" : "")})".Replace(dbms == Dbms.SQLServer ? "timestamp" : "__unused__", "datetime2", StringComparison.Ordinal));
+    }
+
     await database.Execute($"CREATE TABLE {d.Table("Sites")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceType")} varchar(20) NOT NULL, {d.Quote("SiteSettings")} {str}, {d.Quote("Title")} {str}, {d.Quote("ParentId")} bigint NOT NULL DEFAULT 0)");
     await database.Execute($"CREATE TABLE {d.Table("Items")} ({d.Quote("SiteId")} bigint NOT NULL, {d.Quote("ReferenceId")} bigint NOT NULL, {d.Quote("Title")} {str})");
     if (dbms == Dbms.MySQL)
@@ -281,6 +418,44 @@ if (args.Contains("--integration"))
         catch (UserError) { passed++; }
     }
     var sites = await database.ReadSites(default);
+    var completeLookupPlan = RecordIdLookupPlanner.Complete(new([], []), sites).Indexes;
+    Check(Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live standard ID indexes cover table lookup candidates");
+    // 架空の設定から得た候補を3DB共通の専用テストDBで検証する。製品のplan専用制約は変えない。
+    var liveScriptSource = SiteWith(System.Text.Json.JsonSerializer.Serialize(new
+    {
+        ServerScripts = new[] { new { Body = "const query={View:{ColumnFilterHash:{ClassA:'A'}}}; items.Get(1,JSON.stringify(query));" } }
+    })) with { SiteId = 99 };
+    var liveScriptIndexes = ScriptQueryPlanner.Analyze([liveScriptSource, .. sites], dbms, 0).Indexes;
+    var liveJsonSource = liveScriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new
+    {
+        ServerScripts = new[] { new { Body = "items.Get(1,'{\"View\":{\"ColumnFilterHash\":{\"ClassA\":\"A\"}}}');" } }
+    })) };
+    Check(ScriptQueryPlanner.Analyze([liveJsonSource, .. sites], dbms, 0).Indexes.Single().Signature == liveScriptIndexes.Single().Signature, "Live literal JSON shares the same physical candidate");
+    Check(liveScriptIndexes.Count == 1 && liveScriptIndexes.Single().Table == "Results", "Live script candidate targets Results");
+    var liveScriptKey = liveScriptIndexes.Single().Keys.Single(k => k.Column == "ClassA");
+    Check(liveScriptKey.Prefix == (dbms == Dbms.MySQL ? 100 : 0), "Live script candidate respects DB text-key rules");
+    await database.ValidateColumns(liveScriptIndexes, default);
+    await database.Apply(Reconciler.Plan(liveScriptIndexes, await database.ReadIndexes(default), false), default);
+    Check(Reconciler.Plan(liveScriptIndexes, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live script candidate roundtrip is idempotent");
+    Check(Reconciler.Plan(ScriptQueryPlanner.Analyze([liveJsonSource, .. sites], dbms, 0).Indexes, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live literal JSON reuses the existing script index");
+    Check((await database.ReadIndexes(default)).Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 3, "Live script candidate preserves standard indexes");
+    await database.Execute(d.Drop("Results", liveScriptIndexes.Single().Name));
+    await database.Execute(d.Drop("Results", "standard_Results"));
+    var missingLookupChanges = Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), false);
+    Check(missingLookupChanges.Count(c => c.Kind == ChangeKind.Create) == 1 && missingLookupChanges.Single(c => c.Kind == ChangeKind.Create).Spec.Table == "Results", "Live missing record lookup creates only the uncovered table index");
+    await database.Apply(missingLookupChanges, default);
+    Check(Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), true).All(c => c.Kind == ChangeKind.Keep), "Live record lookup repeat with prune is a no-op");
+    await using (System.Data.Common.DbConnection lookupQuery = dbms switch { Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(cs), Dbms.PostgreSQL => new Npgsql.NpgsqlConnection(cs), _ => new MySqlConnector.MySqlConnection(cs) })
+    {
+        await lookupQuery.OpenAsync();
+        await using var lookupCommand = lookupQuery.CreateCommand();
+        lookupCommand.CommandText = $"SELECT {d.Quote("SiteId")} FROM {d.Table("Results")} WHERE {d.Quote("ResultId")}=1";
+        Check(Convert.ToInt64(await lookupCommand.ExecuteScalarAsync()) == 1, "Live ID-only query preserves result on heap without standard lookup");
+    }
+    await database.Execute($"CREATE INDEX {d.Quote("standard_Results")} ON {d.Table("Results")} ({d.Quote("ResultId")})");
+    var restoredLookupChanges = Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), true);
+    Check(restoredLookupChanges.All(c => c.Kind == ChangeKind.Keep) && (await database.ReadIndexes(default)).Any(i => i.Name == "standard_Results"), "Live restored standard lookup is preserved alongside existing managed candidate");
+    await database.Apply(restoredLookupChanges, default);
     var desired = new Planner(dbms, 0).Analyze(sites).Indexes;
     Check(sites.Count == 3 && sites.All(s => s.RecordCount == 1), "Live site counts");
     var liveParents = await database.ReadSiteParents(default);
@@ -337,7 +512,11 @@ if (args.Contains("--integration"))
     var final = await database.ReadIndexes(default);
     Check(final.Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 3, "Live standard indexes preserved");
     Check(final.Where(i => i.Managed).All(i => updated.Any(s => s.Name == i.Name)), "Live obsolete indexes removed");
-    foreach (var i in final.Where(i => i.Managed)) await database.Execute(d.Drop(i.Table, i.Name));
+    foreach (var i in final.Where(i => i.Managed))
+    {
+        await database.Execute(d.Drop(i.Table, i.Name));
+    }
+
     await database.Apply(Reconciler.Plan(updated, await database.ReadIndexes(default), false), default);
     Check(Reconciler.Plan(updated, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Recover after managed indexes disappear");
     var liveView = new ViewPlanner(dbms).Generate([SiteWith(viewSettings) with { Title = "顧客一覧" }]).Single();
@@ -417,7 +596,11 @@ if (args.Contains("--integration"))
             read.CommandText = "SELECT * FROM " + d.Table(view.Name);
             await using var rows = await read.ExecuteReaderAsync();
             var result = new List<ChoiceRow>();
-            while (await rows.ReadAsync()) result.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2)));
+            while (await rows.ReadAsync())
+            {
+                result.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2)));
+            }
+
             return result;
         }
         // 本体の区切り規則を DB の組込関数で再現できるかを、同じ設定の .NET 解析結果と比べる。
@@ -509,8 +692,14 @@ if (args.Contains("--integration"))
             var gaveUp = false;
             try
             {
-                if (dbms == Dbms.PostgreSQL) await impatient.ApplyViews([choiceView], false, default, choices: true);
-                else await impatient.Apply(Reconciler.Plan([lockSpec], await impatient.ReadIndexes(default), false), default);
+                if (dbms == Dbms.PostgreSQL)
+                {
+                    await impatient.ApplyViews([choiceView], false, default, choices: true);
+                }
+                else
+                {
+                    await impatient.Apply(Reconciler.Plan([lockSpec], await impatient.ReadIndexes(default), false), default);
+                }
             }
             catch (UserError) { gaveUp = true; }
             Check(gaveUp && watch.Elapsed < TimeSpan.FromSeconds(30), "DDL gives up within the lock wait limit");
@@ -524,7 +713,23 @@ if (args.Contains("--integration"))
     await database.ApplyViews([], true, default, choices: true);
     Check(!(await database.ReadViewNames(default)).Contains(choiceView.Name), "Choice prune removes only choice views");
     await database.Execute("DROP VIEW " + d.Table("standard_site_view"));
-    if (args.Contains("--benchmark")) await Benchmark.Run(configuration, database, d);
-    foreach (var table in new[] { "Sites", "Items", "Results", "Issues", "Wikis" }) await database.Execute($"DROP TABLE {d.Table(table)}");
+    if (args.Contains("--benchmark"))
+    {
+        await Benchmark.Run(configuration, database, d);
+    }
+
+    foreach (var table in new[] { "Sites", "Items", "Results", "Issues", "Wikis" })
+    {
+        await database.Execute($"DROP TABLE {d.Table(table)}");
+    }
+
     Console.WriteLine($"Integration checks passed ({dbms}). Total checks: {passed}");
+}
+return 0;
+}
+catch (Exception error)
+{
+    // DB例外の本文や接続情報を表示せず、Windowsの未処理例外ダイアログも避ける。
+    Console.Error.WriteLine($"Test run failed ({error.GetType().Name}).");
+    return 1;
 }

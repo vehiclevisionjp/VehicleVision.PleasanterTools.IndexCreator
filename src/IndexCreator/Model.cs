@@ -49,18 +49,26 @@ public static class Reconciler
             if (same != null)
             {
                 if (!same.Plain || same.Spec.Signature != spec.Signature)
+                {
                     throw new UserError("A managed index name has a conflicting definition. No changes were applied.");
+                }
+
                 retained.Add(same.Name);
                 changes.Add(new(same.Valid && !force ? ChangeKind.Keep : ChangeKind.Repair, spec, same.Name));
                 continue;
             }
-            // 管理外の既存索引のみで代替する。古い管理索引を代替にすると prune 後に不足する。
-            var cover = existing.FirstOrDefault(e => !e.Managed && e.Plain && e.Valid && e.Spec.Covers(spec));
+            // prune しない場合は既存の管理索引も代替にできる。prune 時は削除される古い索引に依存しない。
+            var cover = existing.FirstOrDefault(e => (!e.Managed || !prune && !force) && e.Plain && e.Valid && e.Spec.Covers(spec));
             changes.Add(new(cover == null ? ChangeKind.Create : ChangeKind.Keep, spec, cover?.Name ?? spec.Name));
         }
         if (prune)
+        {
             foreach (var old in existing.Where(e => e.Managed && !retained.Contains(e.Name)))
+            {
                 changes.Add(new(ChangeKind.Drop, old.Spec, old.Name));
+            }
+        }
+
         return changes;
     }
 }
@@ -70,57 +78,117 @@ public static class Json
     public static JsonElement Parse(string text) => JsonDocument.Parse(text).RootElement.Clone();
     public static JsonElement Get(this JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) ? v : default;
     public static string Text(this JsonElement e) => e.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "" : e.ToString();
+    public static bool TryInteger(this JsonElement e, out long value)
+    {
+        value = 0;
+        return e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out value);
+    }
     public static bool Bool(this JsonElement e) => e.ValueKind == JsonValueKind.True;
     public static IEnumerable<JsonElement> Array(this JsonElement e) => e.ValueKind == JsonValueKind.Array ? e.EnumerateArray() : [];
     public static IEnumerable<JsonProperty> Props(this JsonElement e) => e.ValueKind == JsonValueKind.Object ? e.EnumerateObject() : [];
     public static JsonElement Object(this JsonElement e) => e.ValueKind == JsonValueKind.String ? Parse(e.GetString()!) : e;
     public static void ValidateSettings(JsonElement settings)
     {
-        if (settings.ValueKind != JsonValueKind.Object) throw new UserError("SiteSettings must be a JSON object.");
+        if (settings.ValueKind != JsonValueKind.Object)
+        {
+            throw new UserError("SiteSettings must be a JSON object.");
+        }
+
         foreach (var name in new[] { "Views", "Columns", "Links", "Summaries", "GridColumns", "FilterColumns", "RelatingColumns" })
         {
             var value = settings.Get(name);
-            if (value.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array)) throw new UserError("A SiteSettings collection has an invalid shape. No changes were applied.");
+            if (value.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array))
+            {
+                throw new UserError("A SiteSettings collection has an invalid shape. No changes were applied.");
+            }
         }
-        foreach (var v in settings.Get("Views").Array()) ValidateView(v);
+        foreach (var v in settings.Get("Views").Array())
+        {
+            ValidateView(v);
+        }
+
         foreach (var link in settings.Get("Links").Array())
         {
-            if (link.ValueKind != JsonValueKind.Object) throw new UserError("A link must be a JSON object. No changes were applied.");
-            if (link.Get("View").ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)) ValidateView(link.Get("View"));
+            if (link.ValueKind != JsonValueKind.Object)
+            {
+                throw new UserError("A link must be a JSON object. No changes were applied.");
+            }
+
+            if (link.Get("View").ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
+            {
+                ValidateView(link.Get("View"));
+            }
         }
         var editor = settings.Get("EditorColumnHash");
         if (editor.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object)
             || editor.Props().Any(p => p.Value.ValueKind is not (JsonValueKind.Null or JsonValueKind.Array) || p.Value.Array().Any(c => c.ValueKind != JsonValueKind.String)))
+        {
             throw new UserError("EditorColumnHash has an invalid shape. No changes were applied.");
+        }
+
         foreach (var relation in settings.Get("RelatingColumns").Array())
+        {
             if (relation.ValueKind != JsonValueKind.Object || relation.Get("Columns").ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array)
                 || relation.Get("Columns").Array().Any(c => c.ValueKind != JsonValueKind.String))
+            {
                 throw new UserError("RelatingColumns has an invalid shape. No changes were applied.");
+            }
+        }
     }
     public static void ValidateView(JsonElement v)
     {
-        if (v.ValueKind != JsonValueKind.Object) throw new UserError("A view must be a JSON object.");
-        foreach (var name in new[] { "ColumnFilterHash", "ColumnSorterHash", "ColumnFilterSearchTypes" })
-            if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object)) throw new UserError("A view dictionary has an invalid shape. No changes were applied.");
-        foreach (var name in new[] { "ColumnFilterExpressions", "ColumnFilterNegatives" })
-            if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array)) throw new UserError("A view collection has an invalid shape. No changes were applied.");
+        if (v.ValueKind != JsonValueKind.Object)
+        {
+            throw new UserError("A view must be a JSON object.");
+        }
+
+        foreach (var name in new[] { "ColumnFilterHash", "ColumnSorterHash", "ColumnFilterSearchTypes", "ColumnFilterExpressions" })
+        {
+            if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object))
+            {
+                throw new UserError("A view dictionary has an invalid shape. No changes were applied.");
+            }
+        }
+
+        foreach (var name in new[] { "ColumnFilterNegatives" })
+        {
+            if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array))
+            {
+                throw new UserError("A view collection has an invalid shape. No changes were applied.");
+            }
+        }
     }
     public static IReadOnlyList<Site> ReadSites(string text)
     {
         var root = Parse(text);
-        if (root.ValueKind != JsonValueKind.Array) throw new UserError("The sites input must be a JSON array.");
+        if (root.ValueKind != JsonValueKind.Array)
+        {
+            throw new UserError("The sites input must be a JSON array.");
+        }
+
         var sites = new List<Site>();
         foreach (var row in root.EnumerateArray())
         {
             var table = row.Get("ReferenceType").Text();
-            if (table is not ("Results" or "Issues" or "Wikis")) continue;
+            if (table is not ("Results" or "Issues" or "Wikis"))
+            {
+                continue;
+            }
+
             if (!row.Get("SiteId").TryGetInt64(out var id) || id <= 0 || !row.Get("RecordCount").TryGetInt64(out var count) || count < 0)
+            {
                 throw new UserError("Each site requires a positive SiteId and a non-negative RecordCount.");
+            }
+
             var settings = row.Get("SiteSettings").Object();
             ValidateSettings(settings);
             sites.Add(new(id, table, settings, count, row.Get("Title").Text()));
         }
-        if (sites.Select(s => s.SiteId).Distinct().Count() != sites.Count) throw new UserError("Duplicate SiteId in input.");
+        if (sites.Select(s => s.SiteId).Distinct().Count() != sites.Count)
+        {
+            throw new UserError("Duplicate SiteId in input.");
+        }
+
         return sites;
     }
     // フォルダを含む全サイトの親子関係。ParentId が省略された行は最上位として扱う。
@@ -128,9 +196,14 @@ public static class Json
     {
         var parents = new Dictionary<long, long>();
         foreach (var row in Parse(text).EnumerateArray())
+        {
             if (row.Get("SiteId") is { ValueKind: JsonValueKind.Number } site && site.TryGetInt64(out var id)
                 && !parents.TryAdd(id, row.Get("ParentId") is { ValueKind: JsonValueKind.Number } p && p.TryGetInt64(out var parent) ? parent : 0))
+            {
                 throw new UserError("Duplicate SiteId in input.");
+            }
+        }
+
         return parents;
     }
 }
@@ -141,12 +214,22 @@ public sealed record SiteExclusion(IReadOnlySet<long> Trees, IReadOnlySet<long> 
     public bool IsEmpty => Trees.Count == 0 && Sites.Count == 0;
     public IReadOnlyList<Site> Apply(IReadOnlyList<Site> sites, IReadOnlyDictionary<long, long> parents)
     {
-        if (Trees.Concat(Sites).Any(id => !parents.ContainsKey(id))) throw new UserError("An excluded SiteId does not exist. No views were applied.");
+        if (Trees.Concat(Sites).Any(id => !parents.ContainsKey(id)))
+        {
+            throw new UserError("An excluded SiteId does not exist. No views were applied.");
+        }
+
         bool InTree(long id)
         {
             var visited = new HashSet<long>();
             for (var current = id; current > 0 && visited.Add(current); current = parents.GetValueOrDefault(current))
-                if (Trees.Contains(current)) return true;
+            {
+                if (Trees.Contains(current))
+                {
+                    return true;
+                }
+            }
+
             return false;
         }
         return sites.Where(s => !Sites.Contains(s.SiteId) && !InTree(s.SiteId)).ToArray();

@@ -2,6 +2,11 @@
   "version": 1,
   "dependencies": {
     "net10.0": {
+      "Acornima": {
+        "type": "Transitive",
+        "resolved": "1.9.1",
+        "contentHash": "8dzVWz1AMyCaHq1DRU+qjNGd6jZyc4BgUBhl0qqdG0y+C02f2JASQaobF+O6A9vrW2QZL5Kx2q6V/KP3Q2LU+A=="
+      },
       "Microsoft.Bcl.Cryptography": {
         "type": "Transitive",
         "resolved": "9.0.18",
@@ -205,6 +210,7 @@
       "VehicleVision.PleasanterTools.IndexCreator": {
         "type": "Project",
         "dependencies": {
+          "Acornima": "[1.9.1, )",
           "Microsoft.Data.SqlClient": "[7.1.1, )",
           "MySqlConnector": "[2.6.2, )",
           "NLog": "[6.2.2, )",

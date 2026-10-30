@@ -3,8 +3,36 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>VehicleVision.PleasanterTools.IndexCreator</AssemblyName>
     <RootNamespace>VehicleVision.PleasanterTools.IndexCreator</RootNamespace>
+  </PropertyGroup>
+
+  <!-- .NET 10 SDK は RuntimeIdentifiers を持つ tool を、RID 別パッケージ＋入口パッケージへ分割する。
+       tool は RID 非依存の単一パッケージにしたいので、dotnet pack の間（_IsPacking）は RuntimeIdentifiers を外す。
+       そのため pack は restore 済みの状態で no-restore オプションを付けて実行する（付けないと packages.lock.json が書き換わる） -->
+  <PropertyGroup Condition="'$(_IsPacking)' != 'true'">
     <RuntimeIdentifiers>win-x86;win-x64;linux-x64;linux-arm64</RuntimeIdentifiers>
   </PropertyGroup>
+
+  <!-- dotnet tool（nuget.org）。RID 非依存・フレームワーク依存の単一パッケージ（.NET 10 Runtime が必要）。
+       コマンド名とパッケージ ID の方針は _documents/リリース手順.md -->
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>index-creator</ToolCommandName>
+    <PackageId>VehicleVision.PleasanterTools.IndexCreator</PackageId>
+    <Description>Pleasanter のサイト構成から必要なインデックスを計画・作成・更新する dotnet tool。SQL Server・PostgreSQL・MySQL に対応。</Description>
+    <PackageTags>pleasanter;vehiclevision;index;sqlserver;postgresql;mysql;dotnet-tool</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseFile>LICENSING.md</PackageLicenseFile>
+    <PackageProjectUrl>https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <!-- README とライセンス関連の文書をパッケージの直下へ同梱する（PackageLicenseFile は LICENSING.md。
+       デュアルライセンスの式は NuGet で表せないため Directory.Build.props 参照） -->
+  <ItemGroup>
+    <PackageReference Include="Acornima" Version="1.9.1" />
+    <None Include="../../README.md;../../LICENSING.md;../../LICENSE-COMMERCIAL.md;../../LICENSE;../../NOTICE;../../ThirdPartyNotices.txt" Pack="true" PackagePath="" Visible="false" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="NLog" Version="6.2.2" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />

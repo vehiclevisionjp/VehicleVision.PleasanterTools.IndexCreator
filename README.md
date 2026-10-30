@@ -9,7 +9,7 @@ Pleasanter のサイト構成から必要なインデックスを計画・作成
 
 ## 配置する
 
-配布版は [v0.3.1](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/releases/tag/v0.3.1) です。Release の Assets から ZIP と SHA256 を取得してください。ZIP は OS・アーキテクチャ共通です。
+配布版は [v0.4.0](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/releases/tag/v0.4.0) です。Release の Assets から ZIP と SHA256 を取得してください。ZIP は OS・アーキテクチャ共通です。
 
 .NET Runtime 10 を用意し、配布 ZIP の `IndexCreator` フォルダを `Implem.Pleasanter`・`Implem.CodeDefiner` と同じ階層へ置きます。
 
@@ -22,6 +22,17 @@ pleasanter/
 ```
 
 接続設定は本体の `App_Data/Parameters/Rds.json` を使います。追加索引を適用する前に **`DisableIndexChangeDetection` を `true`** にしてください。配置・接続・Runtime の詳細は [導入手順](_documents/導入手順.md) を参照してください。
+
+## dotnet tool として導入する（準備中）
+
+nuget.org から dotnet tool として入れる配布も準備しています。**公開前のため、現時点では取得できません。** 公開後は、.NET SDK 10 があれば次で導入できます（ZIP 配布と同じ機能です）。
+
+```powershell
+dotnet tool install -g VehicleVision.PleasanterTools.IndexCreator
+index-creator plan
+```
+
+パッケージはフレームワーク依存で、実行には .NET Runtime 10 が必要です。SQL Server 向けの Windows ネイティブライブラリ（Microsoft.Data.SqlClient.SNI.runtime）が含まれ、その条件は [ライセンスについて](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/blob/master/LICENSING.md) の例外の節に従います。
 
 ## 使う
 
@@ -72,6 +83,8 @@ dotnet VehicleVision.PleasanterTools.IndexCreator.dll _views /y
 
 Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を伴わない並べ替え、リンク項目、サマリを解析します。式索引などの未対応条件とキーサイズの制約は [利用ガイド](_documents/利用ガイド.md) を参照してください。
 
+レコード ID だけで探す参照・結合には、表単位の ID 索引候補も生成します。この候補はサイトの件数閾値によらず、既存の先頭 ID 索引があれば `Keep` になります。主キーや一意制約の復旧は行いません。
+
 ## 資料
 
 - [導入手順](_documents/導入手順.md): Runtime・配置・接続設定
@@ -84,4 +97,16 @@ Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を�
 
 ## ライセンス
 
-AGPL v3（AGPL-3.0-or-later）。[LICENSE](LICENSE)、[NOTICE](NOTICE)、[第三者ライセンス](ThirdPartyNotices.txt) を参照してください。
+著作権者: 株式会社ピー・エム・シー ITソリューション事業部。
+
+**デュアルライセンス**で提供します。詳細は [ライセンスについて](LICENSING.md) を参照してください。
+
+| | ライセンス | 想定する利用 |
+| --- | --- | --- |
+| A | [GNU AGPL v3 以降](LICENSE) | オープンソースとして利用・改変・再配布する場合 |
+| B | [株式会社ピー・エム・シー ITソリューション事業部の商用ライセンス](LICENSE-COMMERCIAL.md) | 法人が AGPL の義務を負わずに利用したい場合（個別契約） |
+
+依存の条件は [NOTICE](NOTICE) と [第三者ライセンス](ThirdPartyNotices.txt) を参照してください。
+
+貢献を取り込む前に [CLA](CLA.md) への署名が必要です。
+手続きは [貢献のしかた](CONTRIBUTING.md)、現在の提供条件は [ライセンスについて](LICENSING.md) を参照してください。

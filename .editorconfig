@@ -7,3 +7,8 @@ indent_style = space
 indent_size = 4
 [*.{json,yml,yaml,md}]
 indent_size = 2
+
+[*.cs]
+# {} の省略を禁止する（if / else / for / foreach / while / using / lock など。1 行で済む本文も同じ）
+csharp_prefer_braces = true:error
+dotnet_diagnostic.IDE0011.severity = error

@@ -5,7 +5,9 @@
 ## 前提
 
 - Node.js 24 以上と Chrome（Playwright は同梱ブラウザではなくローカルの Chrome を使う）。`npm ci --ignore-scripts` で playwright-core 1.63.0（Apache-2.0、依存なし）を入れる。配布物には含まれない開発専用の依存。
-- 固定参照コミットから CodeDefiner と本体をビルドした検証コピー（`temp/` など、リポジトリの管理外）。
+- 別途用意した CodeDefiner と本体の検証コピー（`temp/` など、リポジトリの管理外）。
+  AI 参照専用の取得先・共有先はビルドや実行に使わない。
+  検証版の完全なコミット SHA・固定リンク・参照日を記録する。
 - `compose.yaml` の検証用 DB（`docker compose --profile postgres|mysql|sqlserver up -d --wait`）。
 
 ## 手順
@@ -29,4 +31,5 @@
 
 ## 画面の識別子が変わったとき
 
-操作は本体の要素 ID（`#NewMenuContainer`、`#EditorColumnDialog`、`#ViewFilterSelector` など）とボタン名に依存する。固定参照コミットを更新して失敗した場合は、`lib.mjs` の該当操作を本体の画面に合わせて直す。
+操作は本体の要素 ID（`#NewMenuContainer`、`#EditorColumnDialog`、`#ViewFilterSelector` など）とボタン名に依存する。
+検証コピーの版を更新して失敗した場合は、`lib.mjs` の該当操作を本体の画面に合わせて直す。

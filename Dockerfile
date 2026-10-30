@@ -7,5 +7,5 @@ RUN dotnet publish src/IndexCreator/IndexCreator.csproj -c Release --no-restore 
 FROM mcr.microsoft.com/dotnet/runtime:10.0
 WORKDIR /tools/IndexCreator
 COPY --from=build /app/ ./
-COPY LICENSE NOTICE ThirdPartyNotices.txt ./
+COPY LICENSE LICENSING.md LICENSE-COMMERCIAL.md NOTICE ThirdPartyNotices.txt ./
 ENTRYPOINT ["dotnet", "VehicleVision.PleasanterTools.IndexCreator.dll"]

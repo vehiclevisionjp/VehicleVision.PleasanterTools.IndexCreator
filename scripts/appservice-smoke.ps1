@@ -41,28 +41,28 @@ try {
     Push-Location $outside
     try {
         Invoke-Checked -Arguments @('help') -ExpectedText 'Usage: IndexCreator'
-        Invoke-Checked -Arguments @('plan','/sites',$sites) -ExpectedText 'Desired indexes: 2'
-        Invoke-Checked -Arguments @('_rds','/p',$pleasanter,'/c','/sites',$sites) -ExpectedText 'Desired indexes: 2'
+        Invoke-Checked -Arguments @('plan','/sites',$sites) -ExpectedText 'Desired indexes: 3'
+        Invoke-Checked -Arguments @('_rds','/p',$pleasanter,'/c','/sites',$sites) -ExpectedText 'Desired indexes: 3'
         Invoke-Checked -Arguments @('views','/p',$pleasanter,'/sites',$sites,'/names','column') -ExpectedText 'View_vvplic_Results_'
         Invoke-Checked -Arguments @('_rds','-p',$pleasanter,'/c','/sites',$sites) -ExpectedExit 2 -ExpectedText 'Options start with /'
         Invoke-Checked -Arguments @('views','/p',$pleasanter,'/sites',$sites) -ExpectedText 'View_vvplic_Results_'
         Invoke-Checked -Arguments @('choice-lists','/p',$pleasanter,'/sites',$sites) -ExpectedText 'View_vvplic_ChoiceList_Results_100_ClassB_'
         Invoke-Checked -Arguments @('views','/p',$pleasanter,'/sites',$sites,'/exclude-site','100') -ExpectedText 'Excluded sites: 1\.'
-        Invoke-Checked -Arguments @('_rds','/p',$pleasanter,'/c','/sites',$sites,'/lock-timeout','3') -ExpectedText 'Desired indexes: 2'
+        Invoke-Checked -Arguments @('_rds','/p',$pleasanter,'/c','/sites',$sites,'/lock-timeout','3') -ExpectedText 'Desired indexes: 3'
         Invoke-Checked -Arguments @('_rds','/p',$pleasanter,'/lock-timeout','0') -ExpectedExit 2 -ExpectedText 'Lock timeout must be between'
         $env:INDEXCREATOR_DBMS = 'PostgreSQL'
-        Invoke-Checked -Arguments @('plan','/sites',$sites) -ExpectedText 'Desired indexes: 1'
+        Invoke-Checked -Arguments @('plan','/sites',$sites) -ExpectedText 'Desired indexes: 2'
         $env:INDEXCREATOR_DBMS = 'SQLServer'
         $env:PLEASANTER_OwnerConnectionString = 'Server=127.0.0.1,1;Database=Unavailable;User ID=Smoke;Password=PRIVATE_TEST_MARKER_DO_NOT_LOG;Connect Timeout=1;Encrypt=true;TrustServerCertificate=true'
         Invoke-Checked -Arguments @('plan','/p',$pleasanter) -ExpectedExit 3 -ExpectedText 'Database operation failed'
         # wwwroot 直下に本体ファイルを置く配置は /p wwwroot で指定する。
         Copy-Item (Join-Path $pleasanter 'App_Data') -Destination $wwwroot -Recurse
-        Invoke-Checked -Arguments @('_rds','/p',$wwwroot,'/c','/sites',$sites) -ExpectedText 'Desired indexes: 2'
+        Invoke-Checked -Arguments @('_rds','/p',$wwwroot,'/c','/sites',$sites) -ExpectedText 'Desired indexes: 3'
         $logFiles = @(Get-ChildItem -LiteralPath (Join-Path $outside 'logs') -Filter 'VehicleVision.PleasanterTools.IndexCreator_*.log')
         if ($logFiles.Count -eq 0) { throw 'Execution log was not created in the CodeDefiner-compatible logs folder.' }
         $logText = ($logFiles | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
         if ($logText -match 'PRIVATE_TEST_MARKER_DO_NOT_LOG' -or $logText -match '[^\x00-\x7F]') { throw 'Execution logs leaked secret or non-ASCII data.' }
-        if ($logText -notmatch 'Database operation failed' -or $logText -notmatch 'Desired indexes: 2') { throw 'Execution logs missed result or error messages.' }
+        if ($logText -notmatch 'Database operation failed' -or $logText -notmatch 'Desired indexes: 3') { throw 'Execution logs missed result or error messages.' }
         $script:count++
     } finally { Pop-Location }
 } finally {
