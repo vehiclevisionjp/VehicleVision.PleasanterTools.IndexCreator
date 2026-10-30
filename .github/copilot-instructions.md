@@ -45,4 +45,4 @@ GitHub Actions はユーザー指定により @v7 などのメジャーバージ
 `if` / `else` / `for` / `foreach` / `while` / `using` / `lock` などの本文の `{}` は省略しない。
 <!-- AGENT-RULES:END -->
 
-NuGet（dotnet tool）の公開は SNI.runtime の法務確認が済むまで行わない。`release.yml` の `publish-nuget` は変数 `NUGET_PUBLISH_ENABLED` が `true` のときだけ動き、この変数は管理者だけが設定する。手順は `_documents/リリース手順.md`。
+NuGet（dotnet tool）は、タグの実行で `release.yml` の `publish-nuget` が nuget.org へ公開する。公開した版は取り消せない。手順は `_documents/リリース手順.md`。

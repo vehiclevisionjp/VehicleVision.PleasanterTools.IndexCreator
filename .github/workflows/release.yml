@@ -1,4 +1,4 @@
-# タグ vX.Y.Z で、配布 ZIP の下書きリリースを作る。nuget.org への公開は、変数で有効にしたときだけ行う。
+# タグ vX.Y.Z で、配布 ZIP の下書きリリースを作る。nuget.org への公開（publish-nuget）も、タグの実行で行う。
 # 手順は _documents/リリース手順.md。
 #
 # NuGet 公開（publish-nuget）の前提と注意:
@@ -7,9 +7,7 @@
 #   - nuget.org に、このリポジトリ・このワークフロー（release.yml）の Trusted Publishing ポリシーが要る
 #   - 変数 NUGET_ORG_USER に、公開用の共用アカウントの nuget.org プロフィール名（メールアドレスではない）が要る
 #   - **公開した版は取り消せない（nuget.org では削除できず、非推奨にできるだけ）。** 検査を通ってから push する。
-#   - **既定では公開しない。** リポジトリ変数 NUGET_PUBLISH_ENABLED が 'true' のときだけ publish-nuget が動く。
-#     Microsoft.Data.SqlClient.SNI.runtime が nupkg に入るため、LICENSING.md の例外条件を満たすかの法務確認が済み、
-#     Trusted Publishing のポリシーを作ってから、ユーザーが設定する。この変数を作る・設定する作業は本ワークフローにはない
+#   - Microsoft.Data.SqlClient.SNI.runtime が nupkg に入る件は、法務確認が済んでいる（2026-10-30。LICENSING.md の例外条件）
 #   - タグを打たない dispatch（手動実行）は、検証と pack までで、リリースも公開もしない（dry-run）
 #
 # 参照した一次情報（2026-10-29 参照）
@@ -60,8 +58,8 @@ jobs:
   publish-nuget:
     name: publish-nuget
     needs: package
-    # 既定では動かない。変数 NUGET_PUBLISH_ENABLED が 'true' で、タグの実行のときだけ（ファイル先頭のコメント参照）
-    if: vars.NUGET_PUBLISH_ENABLED == 'true' && github.ref_type == 'tag'
+    # タグの実行のときだけ。タグを打たない手動実行は、検証と pack までで公開しない
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
