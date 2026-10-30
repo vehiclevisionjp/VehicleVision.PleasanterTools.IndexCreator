@@ -22,7 +22,7 @@ internal static class ScriptExtensionTests
             await database.Execute($"INSERT INTO {table} VALUES (1,'fixture','ServerScript',{Literal(settings)},{Literal(body)},{enabled}), (2,'sql','Sql','{{\"OnSelectingWhere\":true}}','PRIVATE_SQL',{enabled}), (3,'disabled','ServerScript','invalid','invalid',{disabled}), (4,'style','Style','invalid','invalid',{enabled})");
             var entries = await database.ReadAnalysisExtensions(default);
             check(entries.Count == 2 && entries.Single(e => e.Type == "ServerScript").Settings.Get("Body").Text() == body, "Live table selects active analysis types and overrides Body");
-            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "view.Filters.Status='100'; view.FilterNegative('Status',false);");
+            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "view.ClearFilters(); view.Filters.Status='100'; view.FilterNegative('Status',false);");
             var inspection = ExtensionInventory.Inspect([site], entries);
             check(ViewMutationPlanner.Analyze([site], dbms, externalSites: inspection.UncertainSites).Indexes.Count == 0, "Live extensions block unproven mutation inference");
             check(inspection.Diagnostics.All(n => !n.Message.Contains("PRIVATE_SQL")), "Live SQL body not disclosed");
@@ -35,6 +35,7 @@ internal static class ScriptExtensionTests
             check(refreshed.UncertainSites.Count == 0, "Live deletion clears old analysis state");
             var candidates = ViewMutationPlanner.Analyze([site], dbms, externalSites: refreshed.UncertainSites).Indexes;
             check(candidates.Count > 0, "Live mutation candidates resume after blockers disappear");
+            check(candidates.All(i => i.Keys.All(k => k.Column != "Manager")), "Live ClearFilters removes saved predicate keys");
             await database.ValidateColumns(candidates, default);
             await database.Apply(Reconciler.Plan(candidates, await database.ReadIndexes(default), false), default);
             check(Reconciler.Plan(candidates, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live mutation indexes roundtrip");
@@ -94,6 +95,27 @@ internal static class ScriptExtensionTests
         var source = MutationSite();
         foreach (var db in Enum.GetValues<Dbms>())
         {
+            var clearedView = MutationSite("view.ClearFilters();") with { ReferenceType = "Issues" };
+            var clearSettings = JsonNode.Parse(clearedView.SiteSettings.GetRawText())!.AsObject();
+            foreach (var flag in new[] { "Incomplete", "Own", "NearCompletionTime", "Delay", "Overdue" })
+            {
+                clearSettings["Views"]![0]![flag] = true;
+            }
+            clearSettings["Views"]![0]!["Search"] = "PRIVATE_SEARCH";
+            clearSettings["Views"]![0]!["ColumnSorterHash"]!["UpdatedTime"] = "asc";
+            clearSettings["Views"]![0]!["ColumnFilterSearchTypes"] = JsonNode.Parse("{\"ClassA\":\"ExactMatch\"}");
+            clearedView = clearedView with { SiteSettings = Json.Parse(clearSettings.ToJsonString()) };
+            var clearPlan = ViewMutationPlanner.Analyze([clearedView], db);
+            check(clearPlan.Indexes.All(i => i.Keys.All(k => k.Column is not ("Status" or "Manager" or "Owner" or "CompletionTime"))), "ClearFilters clears saved predicates and special flags on " + db);
+            check(clearPlan.Indexes.Any(i => i.Keys.Any(k => k.Column == "UpdatedTime" && !k.Desc)), "ClearFilters retains sorting on " + db);
+            check(clearPlan.Diagnostics.All(n => !n.Message.Contains("Full-text") && !n.Message.Contains("PRIVATE_SEARCH")), "ClearFilters clears full-text state on " + db);
+            clearSettings["ServerScripts"]![0]!["Body"] = "view.ClearFilters(); view.Filters.ClassA='A';";
+            check(ViewMutationPlanner.Analyze([clearedView with { SiteSettings = Json.Parse(clearSettings.ToJsonString()) }], db).Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")), "ClearFilters retains search type for later filters on " + db);
+            check(ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view['ClearFilters']();")], db).Indexes.All(i => i.Keys.All(k => k.Column != "Status")), "ClearFilters drops earlier script assignments on " + db);
+            check(ViewMutationPlanner.Analyze([MutationSite("view.FilterNegative('Status'); view.ClearFilters(); view.Filters.Status='100';")], db).Indexes.All(i => i.Keys.All(k => k.Column != "Status")), "ClearFilters retains explicit negative overrides on " + db);
+            var repeated = ViewMutationPlanner.Analyze([OrderedSite("view.ClearFilters(); view.Filters.Manager='1';", "view.ClearFilters(); view.Filters.Status='100';")], db);
+            check(repeated.Indexes.Any(i => i.Keys.Any(k => k.Column == "Status")) && repeated.Indexes.All(i => i.Keys.All(k => k.Column != "Manager")), "Last clear determines retained filters across handlers on " + db);
+            check(clearedView.SiteSettings.Get("Views").Array().First().Get("Own").Bool(), "Clear planning does not mutate saved settings on " + db);
             foreach (var body in new[] { "view.Filters.Status='100'; view.FilterNegative('Status');", "view.FilterNegative('Status',true); view.Filters.Status='100';", "view.Filters.Status='100'; view['FilterNegative']('Status',true);" })
             {
                 check(ViewMutationPlanner.Analyze([MutationSite(body)], db).Indexes.All(i => i.Keys.All(k => k.Column != "Status")), "Explicit negation excludes key regardless of filter assignment order on " + db);
@@ -140,6 +162,11 @@ internal static class ScriptExtensionTests
             check(ViewMutationPlanner.Analyze([OrderedSite("unknown();", bodies[1])], db).Indexes.Count == 0, "Unresolved first handler discards entire inference on " + db);
             check(ViewMutationPlanner.Analyze([OrderedSite(bodies)], db, externalSites: new HashSet<long> { 1 }).Indexes.Count == 0, "Extensions still block multiple handlers on " + db);
         }
+        foreach (var unsupportedClear in new[] { "view.ClearFilters(true);", "view.ClearFilters(context.Id);", "other.ClearFilters();", "if(context.Id) view.ClearFilters();" })
+        {
+            check(ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100';" + unsupportedClear)], Dbms.SQLServer).Indexes.Count == 0, "Unsupported clear call discards whole inference");
+        }
+        check(ServerScriptDiagnostics.Analyze([MutationSite("view.ClearFilters();")]).Any(n => n.Message.Contains("ClearFilters")), "ClearFilters is diagnosed");
         foreach (var unsupportedNegative in new[] { "view.FilterNegative();", "view.FilterNegative(column);", "view.FilterNegative('Status',context.Flag);", "view.FilterNegative('Status','false');", "view.FilterNegative('Status',0);", "view.FilterNegative('Status',true,false);", "view.FilterNegative('PRIVATE_KEY');", "other.FilterNegative('Status');" })
         {
             var result = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100';" + unsupportedNegative)], Dbms.SQLServer);
@@ -172,7 +199,7 @@ internal static class ScriptExtensionTests
         var overwrite = ViewMutationPlanner.Analyze([MutationSite("view.Sorters.UpdatedTime='asc'; view.Sorters.UpdatedTime='desc';")], Dbms.SQLServer);
         check(overwrite.Indexes.SelectMany(i => i.Keys).Where(k => k.Column == "UpdatedTime").All(k => k.Desc), "Last literal assignment wins");
         check(ViewMutationPlanner.Analyze([MutationSite("view['Filters']['Status']='100';")], Dbms.SQLServer).Indexes.Count > 0, "Literal bracket assignment supported");
-        foreach (var body in new[] { "view.Filters.Status=context.UserId;", "view.Filters.Status+='100';", "view.Filters[column]='100';", "view.Filters.Status='100'; unknown();", "const view=other; view.Filters.Status='100';", "if (true) view.Filters.Status='100';", "view.ClearFilters();", "view.Sorters.UpdatedTime='invalid';", "view.Filters.Status='100'; return;", "//Include: Other\nview.Filters.Status='100';" })
+        foreach (var body in new[] { "view.Filters.Status=context.UserId;", "view.Filters.Status+='100';", "view.Filters[column]='100';", "view.Filters.Status='100'; unknown();", "const view=other; view.Filters.Status='100';", "if (true) view.Filters.Status='100';", "view.Sorters.UpdatedTime='invalid';", "view.Filters.Status='100'; return;", "//Include: Other\nview.Filters.Status='100';" })
         {
             check(ViewMutationPlanner.Analyze([MutationSite(body)], Dbms.SQLServer).Indexes.Count == 0, "Unresolved mutation does not create candidates");
         }
