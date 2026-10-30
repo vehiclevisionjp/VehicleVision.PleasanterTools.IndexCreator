@@ -22,7 +22,7 @@ internal static class ScriptExtensionTests
             await database.Execute($"INSERT INTO {table} VALUES (1,'fixture','ServerScript',{Literal(settings)},{Literal(body)},{enabled}), (2,'sql','Sql','{{\"OnSelectingWhere\":true}}','PRIVATE_SQL',{enabled}), (3,'disabled','ServerScript','invalid','invalid',{disabled}), (4,'style','Style','invalid','invalid',{enabled})");
             var entries = await database.ReadAnalysisExtensions(default);
             check(entries.Count == 2 && entries.Single(e => e.Type == "ServerScript").Settings.Get("Body").Text() == body, "Live table selects active analysis types and overrides Body");
-            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "const status='100', direction=1, negative=false, column='Status', sort='UpdatedTime'; view.ClearFilters(); view.Filters[column]=status; view.FilterNegative(column,negative); view.Sorters[sort]=direction;");
+            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "const status='100', direction=1, negative=false, column='Status', sort='UpdatedTime', f='Filters', s='Sorters', clear='ClearFilters', negate='FilterNegative'; view[clear](); view[f][column]=status; view[negate](column,negative); view[s][sort]=direction;");
             var inspection = ExtensionInventory.Inspect([site], entries);
             check(ViewMutationPlanner.Analyze([site], dbms, externalSites: inspection.UncertainSites).Indexes.Count == 0, "Live extensions block unproven mutation inference");
             check(inspection.Diagnostics.All(n => !n.Message.Contains("PRIVATE_SQL")), "Live SQL body not disclosed");
@@ -96,6 +96,17 @@ internal static class ScriptExtensionTests
         var source = MutationSite();
         foreach (var db in Enum.GetValues<Dbms>())
         {
+            var operationBody = "const f='Filters', s='Sorters', clear='ClearFilters', negate='FilterNegative', alias=clear; view[alias](); view[f].Status='100'; view[s].UpdatedTime=1; view[negate]('Status',false);";
+            var operationPlan = ViewMutationPlanner.Analyze([MutationSite(operationBody)], db);
+            var directOperation = ViewMutationPlanner.Analyze([MutationSite("view.ClearFilters(); view.Filters.Status='100'; view.Sorters.UpdatedTime=1; view.FilterNegative('Status',false);")], db);
+            check(operationPlan.Indexes.Count > 0 && operationPlan.Indexes.Select(i => i.Signature).SequenceEqual(directOperation.Indexes.Select(i => i.Signature)), "Constant groups and methods match direct operations on " + db);
+            var orderedOperations = ViewMutationPlanner.Analyze([OrderedSite("const f='Filters', clear='ClearFilters'; view[f].Status='200';", "view[clear](); view[f].Status='100';")], db);
+            var orderedDirect = ViewMutationPlanner.Analyze([OrderedSite("view.Filters.Status='200';", "view.ClearFilters(); view.Filters.Status='100';")], db);
+            check(orderedOperations.Indexes.Count > 0 && orderedOperations.Indexes.Select(i => i.Signature).SequenceEqual(orderedDirect.Indexes.Select(i => i.Signature)), "Constant operations follow handler order on " + db);
+            var operationSearch = SearchSite("'ExactMatch'");
+            var operationSettings = JsonNode.Parse(operationSearch.SiteSettings.GetRawText())!.AsObject();
+            operationSettings["ServerScripts"]![0]!["Body"] = "const f='Filters', s='SearchTypes', c='ClassA'; view[f][c]='A'; view[s][c]='ExactMatch';";
+            check(ViewMutationPlanner.Analyze([operationSearch with { SiteSettings = Json.Parse(operationSettings.ToJsonString()) }], db).Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")), "Constant SearchTypes group resolved on " + db);
             var columnBody = "const column='Status', alias=column, sort='UpdatedTime'; view.Filters[alias]='100'; view.Sorters[sort]=1;";
             var columnPlan = ViewMutationPlanner.Analyze([MutationSite(columnBody)], db);
             var directColumnPlan = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=1;")], db);
@@ -226,14 +237,32 @@ internal static class ScriptExtensionTests
             "view.Filters[key]='100'; const key='Status';",
             "const key='__proto__'; view.Filters[key]='100';",
             "const key='PRIVATE_UNKNOWN_COLUMN'; view.Filters[key]='100';",
-            "const group='Filters'; view[group].Status='100';",
-            "const method='ClearFilters'; view[method]();",
+            "const group='PRIVATE_UNKNOWN_GROUP'; view[group].Status='100';",
+            "const method='PRIVATE_UNKNOWN_METHOD'; view[method]();",
             "const key='Status'; key='Manager'; view.Filters[key]='100';"
         })
         {
             var unresolved = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Manager='1';" + unknownColumn)], Dbms.SQLServer);
             check(unresolved.Indexes.Count == 0 && unresolved.Diagnostics.All(n => !n.Message.Contains("PRIVATE_UNKNOWN_COLUMN")), "Unknown column expression discards whole inference without exposing keys");
         }
+        foreach (var unknownOperation in new[] {
+            "view[group].Status='100'; const group='Filters';",
+            "const group=context.Group; view[group].Status='100';",
+            "const group=1; view[group].Status='100';",
+            "const method=true; view[method]();",
+            "const method='ClearFilters'; view[method](true);",
+            "const method='FilterNegative'; view[method]('Status','false');",
+            "const method='ClearFilters'; other[method]();",
+            "const method='ClearFilters'; view[method+'']();",
+            "const group='Filters'; group='Sorters'; view[group].Status='100';",
+            "const method='ClearFilters'; const call=view[method]; call();"
+        })
+        {
+            check(ViewMutationPlanner.Analyze([MutationSite("view.Filters.Manager='1';" + unknownOperation)], Dbms.SQLServer).Indexes.Count == 0, "Unresolved operation discards whole inference");
+        }
+        var computedNotes = ServerScriptDiagnostics.Analyze([MutationSite("const PRIVATE_OPERATION_NAME='PRIVATE_OPERATION_VALUE'; view[PRIVATE_OPERATION_NAME].Status='100'; view[PRIVATE_OPERATION_NAME]();")]);
+        check(computedNotes.Any(n => n.Message.Contains("computed view group")) && computedNotes.Any(n => n.Message.Contains("computed view method")), "Computed view operations are diagnosed without evaluation");
+        check(computedNotes.All(n => !n.Message.Contains("PRIVATE_OPERATION")), "Computed operation diagnostics hide arbitrary names and values");
         var privateConstant = ViewMutationPlanner.Analyze([MutationSite("const value='PRIVATE_CONSTANT_VALUE'; view.Filters.ClassA=value;")], Dbms.SQLServer);
         check(privateConstant.Diagnostics.All(n => !n.Message.Contains("PRIVATE_CONSTANT_VALUE")), "Constant values are not disclosed in diagnostics");
         foreach (var unsupportedSort in new[] { "2", "'2'", "'release'", "3", "-1", "0.5", "true", "null", "context.Direction", "'ASC'" })
