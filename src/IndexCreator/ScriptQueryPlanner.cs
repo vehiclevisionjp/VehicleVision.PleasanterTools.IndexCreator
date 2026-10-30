@@ -4,7 +4,7 @@ namespace VehicleVision.PleasanterTools.IndexCreator;
 
 public static class ScriptQueryPlanner
 {
-    public static Analysis Analyze(IReadOnlyList<Site> sites, Dbms dbms, long minRecords = 10000, int mysqlPrefix = 100)
+    public static Analysis Analyze(IReadOnlyList<Site> sites, Dbms dbms, long minRecords = 10000, int mysqlPrefix = 100, IReadOnlySet<long>? externalSites = null)
     {
         var targets = sites.ToDictionary(s => s.SiteId);
         var indexes = new List<IndexSpec>();
@@ -15,12 +15,22 @@ public static class ScriptQueryPlanner
             {
                 continue;
             }
+            if (externalSites?.Contains(source.SiteId) == true || source.SiteSettings.Get("ServerScripts").Array().Any(s => !s.Get("Disabled").Bool() && s.Get("Shared").Bool()))
+            {
+                diagnostics.Add(new(source.SiteId, "Script query candidates require review because extensions or shared scripts may affect execution."));
+                continue;
+            }
             var ordinal = 0;
             foreach (var script in source.SiteSettings.Get("ServerScripts").Array())
             {
                 ordinal++;
                 if (script.Get("Disabled").Bool() || string.IsNullOrWhiteSpace(script.Get("Body").Text()))
                 {
+                    continue;
+                }
+                if (script.Get("Body").Text().Contains("//Include:", StringComparison.Ordinal))
+                {
+                    diagnostics.Add(new(source.SiteId, $"Server script #{ordinal}: Include expansion requires review; no query candidate generated."));
                     continue;
                 }
                 IReadOnlyList<ScriptQuery> queries;

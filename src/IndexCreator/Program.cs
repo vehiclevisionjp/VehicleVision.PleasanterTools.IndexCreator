@@ -39,6 +39,8 @@ public static class Program
                       /mysql-prefix <1..191>      TEXT prefix length (default: 100)
                       /include-filter-columns     Include filter controls
                       /include-script-queries     Plan resolved script queries for review (plan only; no prune)
+                      /extension-path <Parameters> Inspect extension files recursively
+                      /extensions-table           Inspect the live Extensions table
                       /offline                    Allow blocking index operations (maintenance window)
                       /lock-timeout <seconds>     Maximum lock wait per DDL before retrying (default: 5)
                       /exclude-tree <id,...>      Views: skip these sites and every site below them
@@ -94,10 +96,22 @@ public static class Program
                 sites);
             if (options.IncludeScriptQueries)
             {
-                var scripts = ScriptQueryPlanner.Analyze(sites, config.Dbms, options.MinRecords, options.MysqlPrefix);
+                var extensions = new List<AnalysisExtension>();
+                if (options.ExtensionPath != null)
+                {
+                    extensions.AddRange(ExtensionInventory.ReadFiles(options.ExtensionPath));
+                }
+                if (options.ExtensionsTable)
+                {
+                    extensions.AddRange(await database!.ReadAnalysisExtensions(cancel.Token));
+                }
+                var inspection = ExtensionInventory.Inspect(sites, extensions);
+                var scripts = ScriptQueryPlanner.Analyze(sites, config.Dbms, options.MinRecords, options.MysqlPrefix, inspection.UncertainSites);
+                var mutations = ViewMutationPlanner.Analyze(sites, config.Dbms, options.MinRecords, options.MysqlPrefix, inspection.UncertainSites);
                 analysis = RecordIdLookupPlanner.Complete(new(
-                    analysis.Indexes.Concat(scripts.Indexes).ToArray(),
-                    analysis.Diagnostics.Concat(scripts.Diagnostics).ToArray()), sites);
+                    analysis.Indexes.Concat(scripts.Indexes).Concat(mutations.Indexes).ToArray(),
+                    analysis.Diagnostics.Concat(scripts.Diagnostics).Concat(mutations.Diagnostics).Concat(inspection.Diagnostics).ToArray()), sites);
+                RuntimeLog.WriteLine($"Extension inputs: files={(options.ExtensionPath != null)}, table={options.ExtensionsTable}; entries={extensions.Count}. Unprovided sources and runtime context are not covered.");
             }
             if (database != null)
             {
