@@ -160,7 +160,7 @@ public static class ViewMutationPlanner
             var value = assignment.Right switch
             {
                 StringLiteral literal => literal.Value,
-                NumericLiteral number when Property(group) == "SearchTypes" => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                NumericLiteral number when Property(group) is "SearchTypes" or "Sorters" => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 _ => null
             };
             if (value == null)
@@ -171,6 +171,10 @@ public static class ViewMutationPlanner
             if (!SupportedColumn(column))
             {
                 return null;
+            }
+            if (Property(group) == "Sorters")
+            {
+                value = value switch { "0" => "asc", "1" => "desc", _ => value };
             }
             if (Property(group) == "Sorters" && value is not ("asc" or "desc"))
             {

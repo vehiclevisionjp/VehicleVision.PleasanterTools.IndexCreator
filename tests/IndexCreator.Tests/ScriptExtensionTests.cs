@@ -22,7 +22,7 @@ internal static class ScriptExtensionTests
             await database.Execute($"INSERT INTO {table} VALUES (1,'fixture','ServerScript',{Literal(settings)},{Literal(body)},{enabled}), (2,'sql','Sql','{{\"OnSelectingWhere\":true}}','PRIVATE_SQL',{enabled}), (3,'disabled','ServerScript','invalid','invalid',{disabled}), (4,'style','Style','invalid','invalid',{enabled})");
             var entries = await database.ReadAnalysisExtensions(default);
             check(entries.Count == 2 && entries.Single(e => e.Type == "ServerScript").Settings.Get("Body").Text() == body, "Live table selects active analysis types and overrides Body");
-            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "view.ClearFilters(); view.Filters.Status='100'; view.FilterNegative('Status',false);");
+            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "view.ClearFilters(); view.Filters.Status='100'; view.FilterNegative('Status',false); view.Sorters.UpdatedTime=1;");
             var inspection = ExtensionInventory.Inspect([site], entries);
             check(ViewMutationPlanner.Analyze([site], dbms, externalSites: inspection.UncertainSites).Indexes.Count == 0, "Live extensions block unproven mutation inference");
             check(inspection.Diagnostics.All(n => !n.Message.Contains("PRIVATE_SQL")), "Live SQL body not disclosed");
@@ -36,6 +36,7 @@ internal static class ScriptExtensionTests
             var candidates = ViewMutationPlanner.Analyze([site], dbms, externalSites: refreshed.UncertainSites).Indexes;
             check(candidates.Count > 0, "Live mutation candidates resume after blockers disappear");
             check(candidates.All(i => i.Keys.All(k => k.Column != "Manager")), "Live ClearFilters removes saved predicate keys");
+            check(candidates.Any(i => i.Keys.Any(k => k.Column == "UpdatedTime" && k.Desc)), "Live numeric sorter retains descending direction");
             await database.ValidateColumns(candidates, default);
             await database.Apply(Reconciler.Plan(candidates, await database.ReadIndexes(default), false), default);
             check(Reconciler.Plan(candidates, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live mutation indexes roundtrip");
@@ -95,6 +96,14 @@ internal static class ScriptExtensionTests
         var source = MutationSite();
         foreach (var db in Enum.GetValues<Dbms>())
         {
+            foreach (var (literal, direction) in new[] { ("0", "asc"), ("1", "desc"), ("'0'", "asc"), ("'1'", "desc") })
+            {
+                var numericSort = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=" + literal + ";")], db);
+                var namedSort = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime='" + direction + "';")], db);
+                check(numericSort.Indexes.Count > 0 && numericSort.Indexes.Select(i => i.Signature).SequenceEqual(namedSort.Indexes.Select(i => i.Signature)), "Numeric sorter matches named sorter on " + db);
+            }
+            var numericOverwrite = ViewMutationPlanner.Analyze([OrderedSite("view.Sorters.UpdatedTime=0;", "view.Sorters.UpdatedTime=1;")], db);
+            check(numericOverwrite.Indexes.Any(i => i.Keys.Any(k => k.Column == "UpdatedTime")) && numericOverwrite.Indexes.SelectMany(i => i.Keys).Where(k => k.Column == "UpdatedTime").All(k => k.Desc), "Last numeric sorter wins across handlers on " + db);
             var clearedView = MutationSite("view.ClearFilters();") with { ReferenceType = "Issues" };
             var clearSettings = JsonNode.Parse(clearedView.SiteSettings.GetRawText())!.AsObject();
             foreach (var flag in new[] { "Incomplete", "Own", "NearCompletionTime", "Delay", "Overdue" })
@@ -162,6 +171,11 @@ internal static class ScriptExtensionTests
             check(ViewMutationPlanner.Analyze([OrderedSite("unknown();", bodies[1])], db).Indexes.Count == 0, "Unresolved first handler discards entire inference on " + db);
             check(ViewMutationPlanner.Analyze([OrderedSite(bodies)], db, externalSites: new HashSet<long> { 1 }).Indexes.Count == 0, "Extensions still block multiple handlers on " + db);
         }
+        foreach (var unsupportedSort in new[] { "2", "'2'", "'release'", "3", "-1", "0.5", "true", "null", "context.Direction", "'ASC'" })
+        {
+            check(ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=" + unsupportedSort + ";")], Dbms.SQLServer).Indexes.Count == 0, "Unsupported sorter discards whole inference");
+        }
+        check(ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status=100;")], Dbms.SQLServer).Indexes.Count == 0, "Numeric sorter support does not expand filter values");
         foreach (var unsupportedClear in new[] { "view.ClearFilters(true);", "view.ClearFilters(context.Id);", "other.ClearFilters();", "if(context.Id) view.ClearFilters();" })
         {
             check(ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100';" + unsupportedClear)], Dbms.SQLServer).Indexes.Count == 0, "Unsupported clear call discards whole inference");
