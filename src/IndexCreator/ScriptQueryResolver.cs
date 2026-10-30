@@ -77,17 +77,64 @@ public static class ScriptQueryResolver
 
     private static ScriptQuery? Query(CallExpression call, Dictionary<string, object?> variables)
     {
-        if (IsCall(call, "items", "Get") && call.Arguments.Count == 2
-            && Value(call.Arguments[0], variables, out var target) && target is double number
-            && number > 0 && number <= 9007199254740991d && number == Math.Truncate(number)
-            && call.Arguments[1] is CallExpression stringify && IsCall(stringify, "JSON", "stringify")
+        if (!IsCall(call, "items", "Get") || call.Arguments.Count != 2
+            || !Value(call.Arguments[0], variables, out var target) || target is not double number
+            || number <= 0 || number > 9007199254740991d || number != Math.Truncate(number))
+        {
+            return null;
+        }
+        if (call.Arguments[1] is CallExpression stringify && IsCall(stringify, "JSON", "stringify")
             && stringify.Arguments.Count == 1 && Value(stringify.Arguments[0], variables, out var data)
             && data is Dictionary<string, object?> query && query.TryGetValue("View", out var view)
             && view is Dictionary<string, object?>)
         {
             return new((long)number, JsonSerializer.SerializeToElement(view));
         }
+        if (Value(call.Arguments[1], variables, out var argument) && argument is string json)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object && UniqueProperties(root)
+                    && root.TryGetProperty("View", out var literalView) && literalView.ValueKind == JsonValueKind.Object)
+                {
+                    return new((long)number, literalView.Clone());
+                }
+            }
+            catch (JsonException)
+            {
+                // 未対応の引数として診断に残す。文字列やパーサー例外には検索値が含まれ得る。
+            }
+        }
         return null;
+    }
+
+    private static bool UniqueProperties(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in value.EnumerateObject())
+            {
+                // 大文字小文字を区別しない受け側で意味が変わる形も確定しない。
+                if (!names.Add(property.Name) || !UniqueProperties(property.Value))
+                {
+                    return false;
+                }
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var element in value.EnumerateArray())
+            {
+                if (!UniqueProperties(element))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static bool IsCall(CallExpression call, string owner, string method) =>
