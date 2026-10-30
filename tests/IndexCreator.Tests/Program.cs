@@ -23,6 +23,23 @@ Check(ScriptNotes("view.Filters.ClassA = secret;").Single().Message.Contains("Cl
 Check(ScriptNotes("view['Sorters']['NumA']='desc';").Single().Message.Contains("Sorters"), "Literal bracket sorter syntax");
 Check(ScriptNotes("view.Filters[column] = secret;").Single().Message.Contains("dynamic/unsupported"), "Computed column remains unresolved");
 Check(ScriptNotes("const data={View:{ColumnFilterHash:{CheckB:'PRIVATE_VALUE'},ColumnSorterHash:{ClassA:'asc'}}}; items.Get(10,JSON.stringify(data));").Count == 3, "Query declarations and calls diagnosed separately");
+IReadOnlyList<ScriptQuery> ResolveScript(string body) => ScriptQueryResolver.Resolve(new Acornima.Parser().ParseScript(body));
+var literalQuery = "let data={View:{ColumnFilterHash:{CheckB:'true'},ColumnSorterHash:{ClassA:'asc'}}}; let records=items.Get(10,JSON.stringify(data));";
+Check(ResolveScript(literalQuery).Single().TargetSiteId == 10, "Literal query resolves target site");
+Check(ResolveScript("try {" + literalQuery + "} catch(e){}").Count == 1, "Whole-script try wrapper supported");
+Check(ResolveScript("unknown(); try {" + literalQuery + "} catch(e){}").Count == 0, "Prior side effects before try rejected");
+Check(ResolveScript(literalQuery).Single().View.Get("ColumnFilterHash").Get("CheckB").Text() == "true", "Literal view retained structurally");
+Check(ResolveScript("const target=10;" + literalQuery.Replace("Get(10,", "Get(target,")).Count == 1, "Scalar target variable resolved");
+foreach (var scriptPrefix in new[] { "unknown();", "if(context.Id){}", "const items=other;", "const JSON=other;", "const {items}=other;" })
+{
+    Check(ResolveScript(scriptPrefix + literalQuery).Count == 0, "Unknown effects or bindings do not resolve query");
+}
+Check(ResolveScript(literalQuery.Replace("let records=", "data.View.ColumnFilterHash.CheckB='false'; let records=")).Count == 0, "Mutation invalidates literal query");
+Check(ResolveScript(literalQuery + "class items {}").Count == 0, "Later lexical API shadow rejected");
+Check(ResolveScript(literalQuery.Replace("'true'", "context.UserId")).Count == 0, "Runtime values not resolved");
+Check(ResolveScript(literalQuery.Replace("CheckB:'true'", "...other")).Count == 0, "Object spread not resolved");
+Check(ResolveScript(literalQuery.Replace("CheckB:'true'", "get CheckB(){return 'true'}")).Count == 0, "Getter never evaluated");
+Check(ResolveScript(literalQuery.Replace("Get(10,", "Get(10.5,")).Count == 0, "Fractional target rejected");
 Check(ScriptNotes("const data={ColumnFilterHash:{'PRIVATE_KEY':'PRIVATE_VALUE'}};").All(d => !d.Message.Contains("PRIVATE")), "Arbitrary keys and values are not logged");
 Check(ScriptNotes("invalid {", true).Count == 0, "Disabled script skipped");
 Reject(() => ScriptNotes("invalid {"), "Malformed script stops analysis");

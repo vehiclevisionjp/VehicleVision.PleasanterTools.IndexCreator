@@ -34,6 +34,13 @@ public static class ServerScriptDiagnostics
                     throw new UserError($"Site {site.SiteId}, server script #{ordinal}: JavaScript parsing failed; no operations were applied.");
                 }
                 var nodes = new Stack<Node>();
+                foreach (var query in ScriptQueryResolver.Resolve(root))
+                {
+                    var filters = query.View.Get("ColumnFilterHash").Props().Select(p => Column(p.Name));
+                    var sorters = query.View.Get("ColumnSorterHash").Props().Select(p => Column(p.Name));
+                    var available = sites.Any(s => s.SiteId == query.TargetSiteId);
+                    result.Add(new(site.SiteId, $"Server script #{ordinal}: Literal View targets site {query.TargetSiteId} (available: {available}); filters: {string.Join(", ", filters)}; sorters: {string.Join(", ", sorters)}. No index generated."));
+                }
                 nodes.Push(root);
                 while (nodes.TryPop(out var node))
                 {
