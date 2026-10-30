@@ -47,7 +47,12 @@ public static class ViewMutationPlanner
                 var changed = JsonNode.Parse(baseline.GetRawText())!.AsObject();
                 foreach (var update in updates)
                 {
-                    var hashName = update.Group == "Filters" ? "ColumnFilterHash" : "ColumnSorterHash";
+                    var hashName = update.Group switch
+                    {
+                        "Filters" => "ColumnFilterHash",
+                        "SearchTypes" => "ColumnFilterSearchTypes",
+                        _ => "ColumnSorterHash"
+                    };
                     var hash = changed[hashName] as JsonObject ?? new JsonObject();
                     if (changed[hashName] == null)
                     {
@@ -94,8 +99,17 @@ public static class ViewMutationPlanner
                 || assignment.Operator != Operator.Assignment
                 || assignment.Left is not MemberExpression member
                 || member.Object is not MemberExpression group || group.Object is not Identifier { Name: "view" }
-                || Property(group) is not ("Filters" or "Sorters")
-                || assignment.Right is not StringLiteral value)
+                || Property(group) is not ("Filters" or "Sorters" or "SearchTypes"))
+            {
+                return null;
+            }
+            var value = assignment.Right switch
+            {
+                StringLiteral literal => literal.Value,
+                NumericLiteral number when Property(group) == "SearchTypes" => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                _ => null
+            };
+            if (value == null)
             {
                 return null;
             }
@@ -104,11 +118,16 @@ public static class ViewMutationPlanner
             {
                 return null;
             }
-            if (Property(group) == "Sorters" && value.Value is not ("asc" or "desc"))
+            if (Property(group) == "Sorters" && value is not ("asc" or "desc"))
             {
                 return null;
             }
-            updates.Add(new(Property(group), column, value.Value));
+            if (Property(group) == "SearchTypes" && value is not
+                ("PartialMatch" or "ExactMatch" or "ForwardMatch" or "PartialMatchMultiple" or "ExactMatchMultiple" or "ForwardMatchMultiple" or "1" or "2" or "3" or "11" or "12" or "13"))
+            {
+                return null;
+            }
+            updates.Add(new(Property(group), column, value));
         }
         return updates;
     }

@@ -43,6 +43,15 @@ internal static class ScriptExtensionTests
             {
                 await database.Execute(dialect.Drop(index.Table, index.Name));
             }
+            var searchCandidates = ViewMutationPlanner.Analyze([SearchSite("'ForwardMatch'")], dbms).Indexes;
+            check(searchCandidates.Count == 1, "Live SearchTypes prefix candidate generated");
+            await database.ValidateColumns(searchCandidates, default);
+            await database.Apply(Reconciler.Plan(searchCandidates, await database.ReadIndexes(default), false), default);
+            check(Reconciler.Plan(searchCandidates, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live SearchTypes candidate roundtrip with DB-specific keys");
+            foreach (var index in searchCandidates)
+            {
+                await database.Execute(dialect.Drop(index.Table, index.Name));
+            }
         }
         finally
         {
@@ -74,11 +83,32 @@ internal static class ScriptExtensionTests
         return site with { SiteSettings = Json.Parse(settings.ToJsonString()) };
     }
 
+    private static Site SearchSite(string value) => new(1, "Results", JsonSerializer.SerializeToElement(new
+    {
+        Columns = new[] { new { ColumnName = "ClassA", SearchType = "PartialMatch" } },
+        ServerScripts = new[] { new { WhenViewProcessing = true, Body = "view.Filters.ClassA='A'; view.SearchTypes.ClassA=" + value + ";" } }
+    }), 20000);
+
     public static void Run(Action<bool, string> check, Action<Action, string> reject)
     {
         var source = MutationSite();
         foreach (var db in Enum.GetValues<Dbms>())
         {
+            foreach (var value in new[] { "'ExactMatch'", "'ExactMatchMultiple'", "2", "12", "'2'", "'12'" })
+            {
+                check(ViewMutationPlanner.Analyze([SearchSite(value)], db).Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")), "SearchTypes exact override creates a key on " + db);
+            }
+            foreach (var value in new[] { "'PartialMatch'", "'PartialMatchMultiple'", "1", "11" })
+            {
+                check(ViewMutationPlanner.Analyze([SearchSite(value)], db).Indexes.All(i => i.Keys.All(k => k.Column != "ClassA")), "SearchTypes partial match is excluded on " + db);
+            }
+            foreach (var value in new[] { "'ForwardMatch'", "'ForwardMatchMultiple'", "3", "13" })
+            {
+                var key = ViewMutationPlanner.Analyze([SearchSite(value)], db).Indexes.Single().Keys.Single(k => k.Column == "ClassA");
+                check(key.Pattern == (db == Dbms.PostgreSQL) && key.Prefix == (db == Dbms.MySQL ? 100 : 0), "SearchTypes forward match respects DB-specific keys on " + db);
+            }
+            var orderedSearch = OrderedSite("view.Filters.ClassA='A'; view.SearchTypes.ClassA='ExactMatch';", "view.SearchTypes.ClassA='PartialMatch';");
+            check(ViewMutationPlanner.Analyze([orderedSearch], db).Indexes.All(i => i.Keys.All(k => k.Column != "ClassA")), "Later SearchTypes override prevents unusable key on " + db);
             var plan = ViewMutationPlanner.Analyze([source], db);
             check(plan.Indexes.Any(i => i.Keys.Any(k => k.Column == "Manager") && i.Keys.Any(k => k.Column == "Status") && i.Keys.Any(k => k.Column == "UpdatedTime" && !k.Desc)), "Mutation merges saved filter and overrides sorter on " + db);
             check(plan.Indexes.Any(i => i.Keys.Any(k => k.Column == "Status") && !i.Keys.Any(k => k.Column == "Manager")), "Mutation includes empty baseline on " + db);
@@ -97,6 +127,12 @@ internal static class ScriptExtensionTests
             check(ViewMutationPlanner.Analyze([OrderedSite("unknown();", bodies[1])], db).Indexes.Count == 0, "Unresolved first handler discards entire inference on " + db);
             check(ViewMutationPlanner.Analyze([OrderedSite(bodies)], db, externalSites: new HashSet<long> { 1 }).Indexes.Count == 0, "Extensions still block multiple handlers on " + db);
         }
+        foreach (var unsupported in new[] { "'UNKNOWN_PRIVATE_VALUE'", "0", "4", "2.5", "true", "null", "context.UserId" })
+        {
+            var result = ViewMutationPlanner.Analyze([SearchSite(unsupported)], Dbms.SQLServer);
+            check(result.Indexes.Count == 0 && result.Diagnostics.All(n => !n.Message.Contains("PRIVATE_VALUE")), "Unknown SearchTypes rejects whole inference without exposing value");
+        }
+        check(ServerScriptDiagnostics.Analyze([SearchSite("'ExactMatch'")]).Any(n => n.Message.Contains("SearchTypes")), "SearchTypes mutation appears in diagnostics");
         check(ViewMutationPlanner.Analyze([OrderedSite("view.Filters.Status='100'", "(view.Sorters.UpdatedTime='asc');")], Dbms.SQLServer).Indexes.Count == 0, "Cross-script ASI call is not treated as independent assignments");
         check(ViewMutationPlanner.Analyze([OrderedSite("view.Filters.Status='100'; // comment", "view.Sorters.UpdatedTime='asc';")], Dbms.SQLServer).Indexes.Count > 0, "Newline terminates cross-script line comment");
         foreach (var wrapper in new[] { "TryCatch", "Functionalize" })

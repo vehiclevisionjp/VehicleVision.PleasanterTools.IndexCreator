@@ -51,7 +51,7 @@ public static class ServerScriptDiagnostics
                     string? message = null;
                     if (node is AssignmentExpression assignment && assignment.Left is MemberExpression member
                         && member.Object is MemberExpression group && group.Object is Identifier { Name: "view" }
-                        && Property(group) is "Filters" or "Sorters")
+                        && Property(group) is "Filters" or "Sorters" or "SearchTypes")
                     {
                         message = $"Possible view.{Property(group)} mutation ({Column(Property(member))}); runtime scope and values require review.";
                     }
