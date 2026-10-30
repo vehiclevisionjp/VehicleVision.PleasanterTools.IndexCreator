@@ -11,6 +11,10 @@ public static class ScriptQueryPlanner
         var diagnostics = new List<Diagnostic>();
         foreach (var source in sites)
         {
+            if (source.SiteSettings.Get("ServerScriptsAllDisabled").Bool())
+            {
+                continue;
+            }
             var ordinal = 0;
             foreach (var script in source.SiteSettings.Get("ServerScripts").Array())
             {

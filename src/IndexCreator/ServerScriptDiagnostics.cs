@@ -11,6 +11,10 @@ public static class ServerScriptDiagnostics
         var result = new List<Diagnostic>();
         foreach (var site in sites)
         {
+            if (site.SiteSettings.Get("ServerScriptsAllDisabled").Bool())
+            {
+                continue;
+            }
             var ordinal = 0;
             foreach (var script in site.SiteSettings.Get("ServerScripts").Array())
             {
