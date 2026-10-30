@@ -20,6 +20,7 @@ void Reject(Action action, string name)
     throw new Exception("FAIL: " + name);
 }
 Site SiteWith(string settings, long count = 20000, string table = "Results") => new(1, table, Json.Parse(settings), count);
+ScriptExtensionTests.Run(Check, Reject);
 Analysis Plan(Dbms db, string settings) => new Planner(db).Analyze([SiteWith(settings)]);
 IReadOnlyList<Diagnostic> ScriptNotes(string body, bool disabled = false) => ServerScriptDiagnostics.Analyze([SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = body, Disabled = disabled } } }))]);
 Check(ScriptNotes("// items.Get(1)\nconst text='view.Filters.ClassA=1';").Count == 0, "Script comments and strings are not calls");
@@ -418,6 +419,7 @@ if (args.Contains("--integration"))
         catch (UserError) { passed++; }
     }
     var sites = await database.ReadSites(default);
+    await ScriptExtensionTests.RunDatabase(database, d, dbms, Check);
     var completeLookupPlan = RecordIdLookupPlanner.Complete(new([], []), sites).Indexes;
     Check(Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live standard ID indexes cover table lookup candidates");
     // 架空の設定から得た候補を3DB共通の専用テストDBで検証する。製品のplan専用制約は変えない。
