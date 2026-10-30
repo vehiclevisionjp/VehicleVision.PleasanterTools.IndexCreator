@@ -22,7 +22,7 @@ internal static class ScriptExtensionTests
             await database.Execute($"INSERT INTO {table} VALUES (1,'fixture','ServerScript',{Literal(settings)},{Literal(body)},{enabled}), (2,'sql','Sql','{{\"OnSelectingWhere\":true}}','PRIVATE_SQL',{enabled}), (3,'disabled','ServerScript','invalid','invalid',{disabled}), (4,'style','Style','invalid','invalid',{enabled})");
             var entries = await database.ReadAnalysisExtensions(default);
             check(entries.Count == 2 && entries.Single(e => e.Type == "ServerScript").Settings.Get("Body").Text() == body, "Live table selects active analysis types and overrides Body");
-            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "view.ClearFilters(); view.Filters.Status='100'; view.FilterNegative('Status',false); view.Sorters.UpdatedTime=1;");
+            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "const status='100', direction=1, negative=false; view.ClearFilters(); view.Filters.Status=status; view.FilterNegative('Status',negative); view.Sorters.UpdatedTime=direction;");
             var inspection = ExtensionInventory.Inspect([site], entries);
             check(ViewMutationPlanner.Analyze([site], dbms, externalSites: inspection.UncertainSites).Indexes.Count == 0, "Live extensions block unproven mutation inference");
             check(inspection.Diagnostics.All(n => !n.Message.Contains("PRIVATE_SQL")), "Live SQL body not disclosed");
@@ -96,6 +96,22 @@ internal static class ScriptExtensionTests
         var source = MutationSite();
         foreach (var db in Enum.GetValues<Dbms>())
         {
+            var constantBody = "const status='100', direction=1; const alias=status; const column='Status', negative=false; view.Filters.Status=alias; view.Sorters.UpdatedTime=direction; view.FilterNegative(column,negative);";
+            var constantPlan = ViewMutationPlanner.Analyze([MutationSite(constantBody)], db);
+            var literalPlan = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=1; view.FilterNegative('Status',false);")], db);
+            check(constantPlan.Indexes.Count > 0 && constantPlan.Indexes.Select(i => i.Signature).SequenceEqual(literalPlan.Indexes.Select(i => i.Signature)), "Constant values match inline literals on " + db);
+            var crossHandler = ViewMutationPlanner.Analyze([OrderedSite("const status='100';", "view.Filters.Status=status;")], db);
+            var inlineHandler = ViewMutationPlanner.Analyze([OrderedSite("view.Filters.Status='100';")], db);
+            check(crossHandler.Indexes.Count > 0 && crossHandler.Indexes.Select(i => i.Signature).SequenceEqual(inlineHandler.Indexes.Select(i => i.Signature)), "Constants follow combined handler order on " + db);
+            check(ViewMutationPlanner.Analyze([MutationSite("const name='Status', negative=true; view.Filters.Status='100'; view.FilterNegative(name,negative);")], db).Indexes.All(i => i.Keys.All(k => k.Column != "Status")), "Boolean constants retain negation on " + db);
+            check(ViewMutationPlanner.Analyze([MutationSite("const status='100'; view.Filters.Status=status; view.ClearFilters();")], db).Indexes.All(i => i.Keys.All(k => k.Column != "Status")), "ClearFilters removes constant assignments on " + db);
+            foreach (var mode in new[] { "'ExactMatch'", "2" })
+            {
+                var constantSearch = SearchSite("searchMode");
+                var constantSettings = JsonNode.Parse(constantSearch.SiteSettings.GetRawText())!.AsObject();
+                constantSettings["ServerScripts"]![0]!["Body"] = "const searchMode=" + mode + ";" + constantSettings["ServerScripts"]![0]!["Body"]!.ToString();
+                check(ViewMutationPlanner.Analyze([constantSearch with { SiteSettings = Json.Parse(constantSettings.ToJsonString()) }], db).Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")), "Constant search type resolved on " + db);
+            }
             foreach (var (literal, direction) in new[] { ("0", "asc"), ("1", "desc"), ("'0'", "asc"), ("'1'", "desc") })
             {
                 var numericSort = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=" + literal + ";")], db);
@@ -171,6 +187,29 @@ internal static class ScriptExtensionTests
             check(ViewMutationPlanner.Analyze([OrderedSite("unknown();", bodies[1])], db).Indexes.Count == 0, "Unresolved first handler discards entire inference on " + db);
             check(ViewMutationPlanner.Analyze([OrderedSite(bodies)], db, externalSites: new HashSet<long> { 1 }).Indexes.Count == 0, "Extensions still block multiple handlers on " + db);
         }
+        foreach (var unsupportedConstant in new[] {
+            "let value='100'; view.Filters.Status=value;",
+            "var value='100'; view.Filters.Status=value;",
+            "const value=context.Id; view.Filters.Status=value;",
+            "const value='10'+'0'; view.Filters.Status=value;",
+            "const value={Status:'100'}; view.Filters.Status=value.Status;",
+            "const value=view; value.Filters.Status='100';",
+            "const view='100'; view.Filters.Status='100';",
+            "view.Filters.Status=value; const value='100';",
+            "const value='100'; value='200'; view.Filters.Status=value;",
+            "const value='100'; unknown(value); view.Filters.Status=value;",
+            "const {value}={value:'100'}; view.Filters.Status=value;",
+            "const value=null; view.Filters.Status=value;",
+            "const value=100; view.Filters.Status=value;",
+            "const name='Status'; view.Filters[name]='100';",
+            "const value='100'; if(context.Id) view.Filters.Status=value;",
+            "const value='100'; view.FilterNegative('Status',value);"
+        })
+        {
+            check(ViewMutationPlanner.Analyze([MutationSite(unsupportedConstant)], Dbms.SQLServer).Indexes.Count == 0, "Unresolved constant body does not generate partial candidates");
+        }
+        var privateConstant = ViewMutationPlanner.Analyze([MutationSite("const value='PRIVATE_CONSTANT_VALUE'; view.Filters.ClassA=value;")], Dbms.SQLServer);
+        check(privateConstant.Diagnostics.All(n => !n.Message.Contains("PRIVATE_CONSTANT_VALUE")), "Constant values are not disclosed in diagnostics");
         foreach (var unsupportedSort in new[] { "2", "'2'", "'release'", "3", "-1", "0.5", "true", "null", "context.Direction", "'ASC'" })
         {
             check(ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=" + unsupportedSort + ";")], Dbms.SQLServer).Indexes.Count == 0, "Unsupported sorter discards whole inference");
