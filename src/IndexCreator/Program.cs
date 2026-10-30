@@ -96,7 +96,7 @@ public static class Program
                 await database.ValidateColumns(analysis.Indexes, cancel.Token);
             }
 
-            foreach (var d in analysis.Diagnostics)
+            foreach (var d in analysis.Diagnostics.Concat(ServerScriptDiagnostics.Analyze(sites)))
             {
                 RuntimeLog.WriteLine($"WARNING: Site {d.SiteId}: {d.Message}");
             }

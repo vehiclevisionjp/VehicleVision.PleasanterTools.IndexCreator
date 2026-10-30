@@ -17,6 +17,17 @@ void Reject(Action action, string name)
 }
 Site SiteWith(string settings, long count = 20000, string table = "Results") => new(1, table, Json.Parse(settings), count);
 Analysis Plan(Dbms db, string settings) => new Planner(db).Analyze([SiteWith(settings)]);
+IReadOnlyList<Diagnostic> ScriptNotes(string body, bool disabled = false) => ServerScriptDiagnostics.Analyze([SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = body, Disabled = disabled } } }))]);
+Check(ScriptNotes("// items.Get(1)\nconst text='view.Filters.ClassA=1';").Count == 0, "Script comments and strings are not calls");
+Check(ScriptNotes("view.Filters.ClassA = secret;").Single().Message.Contains("ClassA"), "Dynamic filter values retain column evidence");
+Check(ScriptNotes("view['Sorters']['NumA']='desc';").Single().Message.Contains("Sorters"), "Literal bracket sorter syntax");
+Check(ScriptNotes("view.Filters[column] = secret;").Single().Message.Contains("dynamic/unsupported"), "Computed column remains unresolved");
+Check(ScriptNotes("const data={View:{ColumnFilterHash:{CheckB:'PRIVATE_VALUE'},ColumnSorterHash:{ClassA:'asc'}}}; items.Get(10,JSON.stringify(data));").Count == 3, "Query declarations and calls diagnosed separately");
+Check(ScriptNotes("const data={ColumnFilterHash:{'PRIVATE_KEY':'PRIVATE_VALUE'}};").All(d => !d.Message.Contains("PRIVATE")), "Arbitrary keys and values are not logged");
+Check(ScriptNotes("invalid {", true).Count == 0, "Disabled script skipped");
+Reject(() => ScriptNotes("invalid {"), "Malformed script stops analysis");
+Check(ScriptNotes("if (context.Id) return; items.Get(model.ClassA);").Count == 1, "Top-level return supported without execution");
+Check(ScriptNotes("function f(items){items.Get(1);}").Single().Message.Contains("Possible"), "Shadowed API is not asserted as definite use");
 
 Check(Plan(Dbms.SQLServer, "{}").Indexes.Count == 1, "SQL Server default sort");
 Check(Plan(Dbms.MySQL, "{}").Indexes.Count == 1, "MySQL default sort");

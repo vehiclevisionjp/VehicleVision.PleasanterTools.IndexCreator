@@ -30,6 +30,7 @@
   <!-- README とライセンス関連の文書をパッケージの直下へ同梱する（PackageLicenseFile は LICENSING.md。
        デュアルライセンスの式は NuGet で表せないため Directory.Build.props 参照） -->
   <ItemGroup>
+    <PackageReference Include="Acornima" Version="1.9.1" />
     <None Include="../../README.md;../../LICENSING.md;../../LICENSE-COMMERCIAL.md;../../LICENSE;../../NOTICE;../../ThirdPartyNotices.txt" Pack="true" PackagePath="" Visible="false" />
   </ItemGroup>
   <ItemGroup>
