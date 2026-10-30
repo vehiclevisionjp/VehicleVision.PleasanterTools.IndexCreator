@@ -122,10 +122,29 @@ public static class ViewMutationPlanner
         {
             throw new UserError("View mutation JavaScript parsing failed.");
         }
+        return ResolveBlock(root, new Dictionary<string, Node>(StringComparer.Ordinal), 0);
+    }
+
+    private static List<Update>? ResolveBlock(Node root, Dictionary<string, Node> constants, int depth)
+    {
+        if (depth > 32)
+        {
+            return null;
+        }
         var updates = new List<Update>();
-        var constants = new Dictionary<string, Node>(StringComparer.Ordinal);
+
         foreach (var statement in root.ChildNodes)
         {
+            if (statement is BlockStatement block)
+            {
+                var nested = ResolveBlock(block, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1);
+                if (nested == null)
+                {
+                    return null;
+                }
+                updates.AddRange(nested);
+                continue;
+            }
             if (statement is VariableDeclaration declaration)
             {
                 if (declaration.Kind != VariableDeclarationKind.Const)
