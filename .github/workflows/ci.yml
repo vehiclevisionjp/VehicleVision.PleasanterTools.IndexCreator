@@ -35,7 +35,7 @@ jobs:
       - run: dotnet build -c Release --no-restore
       - run: pwsh -File scripts/test.ps1
       - run: pwsh -File scripts/package.ps1
-      - name: サブモジュールが配布物に含まれないことを確認する
+      - name: 参照ソースが配布物に含まれないことを確認する
         shell: pwsh
         run: |
           if (Get-ChildItem artifacts -Recurse -Filter 'Implem.*') { throw 'Reference source leaked into distribution.' }
@@ -113,3 +113,5 @@ jobs:
           submodules: false
           persist-credentials: false
       - run: bash scripts/reference-isolation-check.sh
+      - run: bash scripts/sync-agents.sh --check
+      - run: bash scripts/test-sync-reference.sh

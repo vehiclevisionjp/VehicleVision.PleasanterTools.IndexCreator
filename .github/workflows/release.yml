@@ -1,7 +1,25 @@
+# タグ vX.Y.Z で、配布 ZIP の下書きリリースを作る。nuget.org への公開は、変数で有効にしたときだけ行う。
+# 手順は _documents/リリース手順.md。
+#
+# NuGet 公開（publish-nuget）の前提と注意:
+#   - 認証は Trusted Publishing（GitHub Actions の OIDC）。長期の API キーは持たない。
+#     NuGet/login が OIDC トークンを nuget.org へ渡して、1 時間有効の API キーを受け取る。
+#   - nuget.org に、このリポジトリ・このワークフロー（release.yml）の Trusted Publishing ポリシーが要る
+#   - 変数 NUGET_ORG_USER に、公開用の共用アカウントの nuget.org プロフィール名（メールアドレスではない）が要る
+#   - **公開した版は取り消せない（nuget.org では削除できず、非推奨にできるだけ）。** 検査を通ってから push する。
+#   - **既定では公開しない。** リポジトリ変数 NUGET_PUBLISH_ENABLED が 'true' のときだけ publish-nuget が動く。
+#     Microsoft.Data.SqlClient.SNI.runtime が nupkg に入るため、LICENSING.md の例外条件を満たすかの法務確認が済み、
+#     Trusted Publishing のポリシーを作ってから、ユーザーが設定する。この変数を作る・設定する作業は本ワークフローにはない
+#   - タグを打たない dispatch（手動実行）は、検証と pack までで、リリースも公開もしない（dry-run）
+#
+# 参照した一次情報（2026-10-29 参照）
+#   - Trusted Publishing: https://learn.microsoft.com/nuget/nuget-org/trusted-publishing
+#   - NuGet/login v1.2.0: https://github.com/NuGet/login
 name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -16,7 +34,105 @@ jobs:
       - run: dotnet build -c Release --no-restore
       - run: pwsh -File scripts/test.ps1
       - run: pwsh -File scripts/package.ps1
+      - name: NuGet パッケージ（dotnet tool）を作る
+        # タグの実行はタグの版、dispatch は公開に使えない版（dry-run）。
+        # RuntimeIdentifiers は pack の間だけ外れるので、restore 済みで --no-restore を付ける（IndexCreator.csproj 参照）
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; else version="0.0.0-dryrun"; fi
+          dotnet pack src/IndexCreator/IndexCreator.csproj -c Release --no-restore -p:Version="$version" -o artifacts/nuget
+      - name: nupkg が 1 つで、tool として入るための設定を持つか
+        run: |
+          set -eu
+          test "$(ls artifacts/nuget/*.nupkg | wc -l)" = 1
+          unzip -p artifacts/nuget/*.nupkg tools/net10.0/any/DotnetToolSettings.xml | grep -q 'index-creator'
+      - name: NuGet パッケージを artifact にする
+        uses: actions/upload-artifact@v7
+        with:
+          name: nupkg
+          path: artifacts/nuget/*.nupkg
+          if-no-files-found: error
       - name: 配布 ZIP を下書きリリースへ添付する
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" artifacts/package/*.zip* --draft --title "$GITHUB_REF_NAME" --generate-notes
+
+  publish-nuget:
+    name: publish-nuget
+    needs: package
+    # 既定では動かない。変数 NUGET_PUBLISH_ENABLED が 'true' で、タグの実行のときだけ（ファイル先頭のコメント参照）
+    if: vars.NUGET_PUBLISH_ENABLED == 'true' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # nuget.org へ渡す OIDC トークンを発行するために要る
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # タグのコミットが master に含まれるかを見るため、履歴を取る
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: タグのコミットが master に含まれるか
+        # master 以外のコミットを公開しない。master はリリース確定状態を保つブランチ
+        run: |
+          git fetch origin master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error title=master に含まれないコミットです::タグは master の HEAD に打つこと（_documents/リリース手順.md）"
+            exit 1
+          fi
+
+      - name: タグと Directory.Build.props の Version が一致するか
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -n 1)
+          case "$tag" in
+            "$version"|"$version"-*) ;;
+            *) echo "::error::タグ($tag)が Directory.Build.props の Version($version)と合わない"; exit 1 ;;
+          esac
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: nupkg
+          path: artifacts/nuget
+
+      - name: nupkg の版がタグと一致するか
+        run: |
+          set -eu
+          test "$(ls artifacts/nuget/*.nupkg | wc -l)" = 1
+          expected="VehicleVision.PleasanterTools.IndexCreator.${GITHUB_REF_NAME#v}.nupkg"
+          actual=$(basename artifacts/nuget/*.nupkg)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::nupkg($actual)がタグから期待する名前($expected)と合わない"
+            exit 1
+          fi
+
+      - name: NuGet のユーザー名が設定されているか
+        env:
+          NUGET_ORG_USER: ${{ vars.NUGET_ORG_USER }}
+        run: |
+          if [ -z "$NUGET_ORG_USER" ]; then
+            echo "::error title=変数 NUGET_ORG_USER が未設定です::公開用の共用アカウントの nuget.org プロフィール名（メールアドレスではない）を登録すること（_documents/リリース手順.md）"
+            exit 1
+          fi
+
+      - name: nuget.org の API キーを受け取る（OIDC。1 時間有効）
+        id: login
+        # 公開の認証を扱うので、コミットで固定する
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_ORG_USER }}
+
+      - name: nuget.org へ公開する
+        # --skip-duplicate: 同じ版の再実行を害のないものにする
+        run: >
+          dotnet nuget push "artifacts/nuget/*.nupkg"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source "https://api.nuget.org/v3/index.json"
+          --skip-duplicate
