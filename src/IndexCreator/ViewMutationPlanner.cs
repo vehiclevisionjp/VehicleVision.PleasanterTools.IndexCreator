@@ -185,7 +185,9 @@ public static class ViewMutationPlanner
             {
                 return null;
             }
-            var column = Property(member);
+            var column = member.Computed
+                ? Constant(member.Property, constants) is StringLiteral key ? key.Value : ""
+                : Property(member);
             if (!SupportedColumn(column))
             {
                 return null;

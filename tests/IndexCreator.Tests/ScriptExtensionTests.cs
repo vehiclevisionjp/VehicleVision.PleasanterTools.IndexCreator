@@ -22,7 +22,7 @@ internal static class ScriptExtensionTests
             await database.Execute($"INSERT INTO {table} VALUES (1,'fixture','ServerScript',{Literal(settings)},{Literal(body)},{enabled}), (2,'sql','Sql','{{\"OnSelectingWhere\":true}}','PRIVATE_SQL',{enabled}), (3,'disabled','ServerScript','invalid','invalid',{disabled}), (4,'style','Style','invalid','invalid',{enabled})");
             var entries = await database.ReadAnalysisExtensions(default);
             check(entries.Count == 2 && entries.Single(e => e.Type == "ServerScript").Settings.Get("Body").Text() == body, "Live table selects active analysis types and overrides Body");
-            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "const status='100', direction=1, negative=false; view.ClearFilters(); view.Filters.Status=status; view.FilterNegative('Status',negative); view.Sorters.UpdatedTime=direction;");
+            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "const status='100', direction=1, negative=false, column='Status', sort='UpdatedTime'; view.ClearFilters(); view.Filters[column]=status; view.FilterNegative(column,negative); view.Sorters[sort]=direction;");
             var inspection = ExtensionInventory.Inspect([site], entries);
             check(ViewMutationPlanner.Analyze([site], dbms, externalSites: inspection.UncertainSites).Indexes.Count == 0, "Live extensions block unproven mutation inference");
             check(inspection.Diagnostics.All(n => !n.Message.Contains("PRIVATE_SQL")), "Live SQL body not disclosed");
@@ -96,6 +96,17 @@ internal static class ScriptExtensionTests
         var source = MutationSite();
         foreach (var db in Enum.GetValues<Dbms>())
         {
+            var columnBody = "const column='Status', alias=column, sort='UpdatedTime'; view.Filters[alias]='100'; view.Sorters[sort]=1;";
+            var columnPlan = ViewMutationPlanner.Analyze([MutationSite(columnBody)], db);
+            var directColumnPlan = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=1;")], db);
+            check(columnPlan.Indexes.Count > 0 && columnPlan.Indexes.Select(i => i.Signature).SequenceEqual(directColumnPlan.Indexes.Select(i => i.Signature)), "Constant column names match direct keys on " + db);
+            var orderedColumns = ViewMutationPlanner.Analyze([OrderedSite("const column='Status'; view.Filters[column]='200';", "view.ClearFilters(); view.Filters[column]='100';")], db);
+            var directOrdered = ViewMutationPlanner.Analyze([OrderedSite("view.Filters.Status='200';", "view.ClearFilters(); view.Filters.Status='100';")], db);
+            check(orderedColumns.Indexes.Count > 0 && orderedColumns.Indexes.Select(i => i.Signature).SequenceEqual(directOrdered.Indexes.Select(i => i.Signature)), "Constant columns follow handler order and clearing on " + db);
+            var columnSearch = SearchSite("'ExactMatch'");
+            var columnSettings = JsonNode.Parse(columnSearch.SiteSettings.GetRawText())!.AsObject();
+            columnSettings["ServerScripts"]![0]!["Body"] = "const key='ClassA'; view['Filters'][key]='A'; view.SearchTypes[key]='ExactMatch';";
+            check(ViewMutationPlanner.Analyze([columnSearch with { SiteSettings = Json.Parse(columnSettings.ToJsonString()) }], db).Indexes.Select(i => i.Signature).SequenceEqual(ViewMutationPlanner.Analyze([columnSearch], db).Indexes.Select(i => i.Signature)), "Constant search type column matches direct column on " + db);
             var constantBody = "const status='100', direction=1; const alias=status; const column='Status', negative=false; view.Filters.Status=alias; view.Sorters.UpdatedTime=direction; view.FilterNegative(column,negative);";
             var constantPlan = ViewMutationPlanner.Analyze([MutationSite(constantBody)], db);
             var literalPlan = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=1; view.FilterNegative('Status',false);")], db);
@@ -201,12 +212,27 @@ internal static class ScriptExtensionTests
             "const {value}={value:'100'}; view.Filters.Status=value;",
             "const value=null; view.Filters.Status=value;",
             "const value=100; view.Filters.Status=value;",
-            "const name='Status'; view.Filters[name]='100';",
+            "const name=context.Column; view.Filters[name]='100';",
             "const value='100'; if(context.Id) view.Filters.Status=value;",
             "const value='100'; view.FilterNegative('Status',value);"
         })
         {
             check(ViewMutationPlanner.Analyze([MutationSite(unsupportedConstant)], Dbms.SQLServer).Indexes.Count == 0, "Unresolved constant body does not generate partial candidates");
+        }
+        foreach (var unknownColumn in new[] {
+            "const key=1; view.Filters[key]='100';",
+            "const key=true; view.Filters[key]='100';",
+            "const key='Status'; view.Filters[key+'']='100';",
+            "view.Filters[key]='100'; const key='Status';",
+            "const key='__proto__'; view.Filters[key]='100';",
+            "const key='PRIVATE_UNKNOWN_COLUMN'; view.Filters[key]='100';",
+            "const group='Filters'; view[group].Status='100';",
+            "const method='ClearFilters'; view[method]();",
+            "const key='Status'; key='Manager'; view.Filters[key]='100';"
+        })
+        {
+            var unresolved = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Manager='1';" + unknownColumn)], Dbms.SQLServer);
+            check(unresolved.Indexes.Count == 0 && unresolved.Diagnostics.All(n => !n.Message.Contains("PRIVATE_UNKNOWN_COLUMN")), "Unknown column expression discards whole inference without exposing keys");
         }
         var privateConstant = ViewMutationPlanner.Analyze([MutationSite("const value='PRIVATE_CONSTANT_VALUE'; view.Filters.ClassA=value;")], Dbms.SQLServer);
         check(privateConstant.Diagnostics.All(n => !n.Message.Contains("PRIVATE_CONSTANT_VALUE")), "Constant values are not disclosed in diagnostics");
