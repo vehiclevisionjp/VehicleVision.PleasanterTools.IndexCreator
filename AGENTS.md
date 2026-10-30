@@ -28,7 +28,7 @@ Draft PR（WIP:、Closes #N）。利用者の DB を変更する機能のマー�
 正式な要件は `_documents/` に置く。共通規約はこのファイルが単一の参照元。
 AGENTS.md は `bash scripts/sync-agents.sh` で再生成し、`--check` で同期を確認する。
 CLAUDE.md からも参照する。
-共有メモリは Internal の `VehicleVision.PleasanterTools.IndexCreator.ClaudeMemory` を使い、資格情報は記録しない。
+共有メモリは Internal の `VehicleVision.PleasanterTools.ClaudeMemory` の `IndexCreator/` フォルダを使い、資格情報は記録しない。
 メモリと正式規約が食い違ったら正式規約を優先する。
 
 README は利用者向けの製品説明と操作の入口。導入・利用・更新運用も利用者向け資料へ置く。
