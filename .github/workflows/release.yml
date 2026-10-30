@@ -130,9 +130,21 @@ jobs:
           user: ${{ vars.NUGET_ORG_USER }}
 
       - name: nuget.org へ公開する
-        # --skip-duplicate: 同じ版の再実行を害のないものにする
-        run: >
-          dotnet nuget push "artifacts/nuget/*.nupkg"
-          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
-          --source "https://api.nuget.org/v3/index.json"
-          --skip-duplicate
+        # --skip-duplicate は付けない。409 を何でも成功にして、ID 予約やポリシーの不備を隠すため。
+        # 同じ版の再実行（既に公開済み）だけを成功とみなす。
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        shell: bash
+        run: |
+          set +e
+          out=$(dotnet nuget push "artifacts/nuget/*.nupkg" --api-key "$NUGET_API_KEY" --source "https://api.nuget.org/v3/index.json" 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            if echo "$out" | grep -q "already exists and cannot be modified"; then
+              echo "::warning::この版は既に公開済みです。公開は行いませんでした"
+            else
+              exit "$rc"
+            fi
+          fi
