@@ -7,7 +7,7 @@
     <!-- .editorconfig の IDE 規則（{} の省略禁止など）を、ビルドで強制する -->
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
-    <Version>0.3.1</Version>
+    <Version>0.4.0</Version>
     <Company>PMC Co., Ltd. IT Solution Div.</Company>
     <Authors>PMC Co., Ltd. IT Solution Div.</Authors>
     <Copyright>Copyright (C) PMC Co., Ltd. IT Solution Div.</Copyright>
