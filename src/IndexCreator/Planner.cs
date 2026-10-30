@@ -41,7 +41,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
     private static bool Choices(JsonElement c) => !string.IsNullOrWhiteSpace(c.Get("ChoicesText").Text()) && c.Get("ControlType").Text() is "" or "ChoicesText";
     private static HashSet<string> Links(Site s)
     {
-        var result = s.SiteSettings.Get("Links").Array().Where(l => l.Get("SiteId").TryGetInt64(out var id) && id > 0).Select(l => l.Get("ColumnName").Text()).ToHashSet(StringComparer.Ordinal);
+        var result = s.SiteSettings.Get("Links").Array().Where(l => l.Get("SiteId").TryInteger(out var id) && id > 0).Select(l => l.Get("ColumnName").Text()).ToHashSet(StringComparer.Ordinal);
         foreach (var c in s.SiteSettings.Get("Columns").Array())
         {
             if (Regex.IsMatch(c.Get("ChoicesText").Text(), @"(?m)^\s*\[\[\d+[^\]]*\]\]\s*$"))
@@ -184,7 +184,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
                 }
 
                 Json.ValidateView(view);
-                if (!link.Get("SiteId").TryGetInt64(out var id) || id <= 0)
+                if (!link.Get("SiteId").TryInteger(out var id) || id <= 0)
                 {
                     continue;
                 }
@@ -206,9 +206,9 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
                 var columns = relation.Get("Columns").Array().Select(c => c.Text()).ToArray();
                 for (var n = 1; n < columns.Length; n++)
                 {
-                    var parent = sourceLinks.FirstOrDefault(l => l.Get("ColumnName").Text() == columns[n - 1] && l.Get("SiteId").TryGetInt64(out var id) && id > 0);
-                    var child = sourceLinks.FirstOrDefault(l => l.Get("ColumnName").Text() == columns[n] && l.Get("SiteId").TryGetInt64(out var id) && id > 0);
-                    if (!parent.Get("SiteId").TryGetInt64(out var parentId) || !child.Get("SiteId").TryGetInt64(out var childId))
+                    var parent = sourceLinks.FirstOrDefault(l => l.Get("ColumnName").Text() == columns[n - 1] && l.Get("SiteId").TryInteger(out var id) && id > 0);
+                    var child = sourceLinks.FirstOrDefault(l => l.Get("ColumnName").Text() == columns[n] && l.Get("SiteId").TryInteger(out var id) && id > 0);
+                    if (!parent.Get("SiteId").TryInteger(out var parentId) || !child.Get("SiteId").TryInteger(out var childId))
                     { Note(source, $"Relating columns {columns[n - 1]} -> {columns[n]}: link settings are missing; no candidate was generated."); continue; }
                     if (!lookup.TryGetValue(childId, out var target))
                     { Note(source, $"Relating columns {columns[n - 1]} -> {columns[n]}: target site {childId} is unavailable; no candidate was generated."); continue; }
@@ -220,7 +220,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
                     var editor = target.SiteSettings.Get("EditorColumnHash").Props().SelectMany(p => p.Value.Array()).Select(c => c.Text()).ToList();
                     // 本体 GetParentLinkedClass と同じく、編集項目順を優先し、同順位は Links の順を残す。
                     var parentLinks = target.SiteSettings.Get("Links").Array()
-                        .Where(l => l.Get("SiteId").TryGetInt64(out var id) && id == parentId)
+                        .Where(l => l.Get("SiteId").TryInteger(out var id) && id == parentId)
                         .Select(l => l.Get("ColumnName").Text()).ToArray();
                     if (editor.Count == 0 && parentLinks.Length > 1)
                     { Note(source, $"Relating columns target site {childId}: editor order is unavailable and multiple parent links exist; no candidate was generated."); continue; }
@@ -243,7 +243,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
     }
     private void AnalyzeView(Site s, JsonElement view, HashSet<string> links, bool choiceLookup = false)
     {
-        if (view.Get("ColumnFilterExpressions").Array().Any())
+        if (view.Get("ColumnFilterExpressions").Props().Any())
         {
             Note(s, "ColumnFilterExpressions are not covered by ordinary index planning.");
         }

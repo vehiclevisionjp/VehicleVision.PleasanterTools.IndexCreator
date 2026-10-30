@@ -83,6 +83,8 @@ dotnet VehicleVision.PleasanterTools.IndexCreator.dll _views /y
 
 Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を伴わない並べ替え、リンク項目、サマリを解析します。式索引などの未対応条件とキーサイズの制約は [利用ガイド](_documents/利用ガイド.md) を参照してください。
 
+レコード ID だけで探す参照・結合には、表単位の ID 索引候補も生成します。この候補はサイトの件数閾値によらず、既存の先頭 ID 索引があれば `Keep` になります。主キーや一意制約の復旧は行いません。
+
 ## 資料
 
 - [導入手順](_documents/導入手順.md): Runtime・配置・接続設定

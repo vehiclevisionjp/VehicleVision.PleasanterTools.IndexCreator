@@ -57,8 +57,8 @@ public static class Reconciler
                 changes.Add(new(same.Valid && !force ? ChangeKind.Keep : ChangeKind.Repair, spec, same.Name));
                 continue;
             }
-            // 管理外の既存索引のみで代替する。古い管理索引を代替にすると prune 後に不足する。
-            var cover = existing.FirstOrDefault(e => !e.Managed && e.Plain && e.Valid && e.Spec.Covers(spec));
+            // prune しない場合は既存の管理索引も代替にできる。prune 時は削除される古い索引に依存しない。
+            var cover = existing.FirstOrDefault(e => (!e.Managed || !prune && !force) && e.Plain && e.Valid && e.Spec.Covers(spec));
             changes.Add(new(cover == null ? ChangeKind.Create : ChangeKind.Keep, spec, cover?.Name ?? spec.Name));
         }
         if (prune)
@@ -78,6 +78,11 @@ public static class Json
     public static JsonElement Parse(string text) => JsonDocument.Parse(text).RootElement.Clone();
     public static JsonElement Get(this JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) ? v : default;
     public static string Text(this JsonElement e) => e.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "" : e.ToString();
+    public static bool TryInteger(this JsonElement e, out long value)
+    {
+        value = 0;
+        return e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out value);
+    }
     public static bool Bool(this JsonElement e) => e.ValueKind == JsonValueKind.True;
     public static IEnumerable<JsonElement> Array(this JsonElement e) => e.ValueKind == JsonValueKind.Array ? e.EnumerateArray() : [];
     public static IEnumerable<JsonProperty> Props(this JsonElement e) => e.ValueKind == JsonValueKind.Object ? e.EnumerateObject() : [];
@@ -137,7 +142,7 @@ public static class Json
             throw new UserError("A view must be a JSON object.");
         }
 
-        foreach (var name in new[] { "ColumnFilterHash", "ColumnSorterHash", "ColumnFilterSearchTypes" })
+        foreach (var name in new[] { "ColumnFilterHash", "ColumnSorterHash", "ColumnFilterSearchTypes", "ColumnFilterExpressions" })
         {
             if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object))
             {
@@ -145,7 +150,7 @@ public static class Json
             }
         }
 
-        foreach (var name in new[] { "ColumnFilterExpressions", "ColumnFilterNegatives" })
+        foreach (var name in new[] { "ColumnFilterNegatives" })
         {
             if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array))
             {
