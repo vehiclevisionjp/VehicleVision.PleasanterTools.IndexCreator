@@ -1,10 +1,13 @@
 using VehicleVision.PleasanterTools.IndexCreator;
 
+try
+{
 var passed = 0;
 void Check(bool condition, string name)
 {
     if (!condition)
     {
+        Console.Error.WriteLine("FAIL: " + name);
         throw new Exception("FAIL: " + name);
     }
 
@@ -13,6 +16,7 @@ void Check(bool condition, string name)
 void Reject(Action action, string name)
 {
     try { action(); } catch (UserError) { passed++; return; }
+    Console.Error.WriteLine("FAIL: " + name);
     throw new Exception("FAIL: " + name);
 }
 Site SiteWith(string settings, long count = 20000, string table = "Results") => new(1, table, Json.Parse(settings), count);
@@ -22,16 +26,34 @@ Check(ScriptNotes("// items.Get(1)\nconst text='view.Filters.ClassA=1';").Count 
 Check(ScriptNotes("view.Filters.ClassA = secret;").Single().Message.Contains("ClassA"), "Dynamic filter values retain column evidence");
 Check(ScriptNotes("view['Sorters']['NumA']='desc';").Single().Message.Contains("Sorters"), "Literal bracket sorter syntax");
 Check(ScriptNotes("view.Filters[column] = secret;").Single().Message.Contains("dynamic/unsupported"), "Computed column remains unresolved");
-Check(ScriptNotes("const data={View:{ColumnFilterHash:{CheckB:'PRIVATE_VALUE'},ColumnSorterHash:{ClassA:'asc'}}}; items.Get(10,JSON.stringify(data));").Count == 3, "Query declarations and calls diagnosed separately");
+Check(ScriptNotes("const data={View:{ColumnFilterHash:{CheckB:'PRIVATE_VALUE'},ColumnSorterHash:{ClassA:'asc'}}}; items.Get(10,JSON.stringify(data));").Count == 4, "Query declarations, calls and resolved target diagnosed separately");
 IReadOnlyList<ScriptQuery> ResolveScript(string body) => ScriptQueryResolver.Resolve(new Acornima.Parser().ParseScript(body));
 var literalQuery = "let data={View:{ColumnFilterHash:{CheckB:'true'},ColumnSorterHash:{ClassA:'asc'}}}; let records=items.Get(10,JSON.stringify(data));";
 var scriptSource = SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = literalQuery } } }), 1) with { SiteId = 99 };
 var scriptTarget = SiteWith("{}") with { SiteId = 10 };
+var standaloneQuery = literalQuery.Replace("let records=", "");
+var standaloneSource = scriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = standaloneQuery } } })) };
+var disabledSource = scriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { ServerScriptsAllDisabled = true, ServerScripts = new[] { new { Body = literalQuery }, new { Body = "invalid {" } } })) };
+Check(ServerScriptDiagnostics.Analyze([disabledSource]).Count == 0, "Site-wide disabled scripts are not parsed or diagnosed");
 foreach (var scriptDb in new[] { Dbms.SQLServer, Dbms.PostgreSQL, Dbms.MySQL })
 {
     var scriptPlan = ScriptQueryPlanner.Analyze([scriptSource, scriptTarget], scriptDb);
     Check(scriptPlan.Indexes.Single().SiteId == 10 && scriptPlan.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(new[] { "SiteId", "CheckB" }), "Script candidates use target, not source; wrapped sort excluded");
+    Check(ScriptQueryPlanner.Analyze([standaloneSource, scriptTarget], scriptDb).Indexes.Single().Signature == scriptPlan.Indexes.Single().Signature, "Standalone query has the same candidate on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([disabledSource, scriptTarget], scriptDb).Indexes.Count == 0, "Site-wide disabled scripts produce no candidates on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([standaloneSource, scriptTarget with { RecordCount = 1 }], scriptDb).Indexes.Count == 0, "Standalone query respects threshold on " + scriptDb);
 }
+Check(ResolveScript(standaloneQuery).Count == 1, "Standalone Get resolved");
+Check(ResolveScript("try {" + standaloneQuery + "} catch(e){}").Count == 1, "Standalone Get in whole-script try resolved");
+Check(ResolveScript("items.Get(10,JSON.stringify({View:{ColumnFilterHash:{Status:'100'}}}));").Count == 1, "Standalone inline View resolved");
+foreach (var standalonePrefix in new[] { "unknown();", "if(context.Id){}", "const items=other;", "const JSON=other;" })
+{
+    Check(ResolveScript(standalonePrefix + standaloneQuery).Count == 0, "Standalone query does not bypass effects or shadowing");
+}
+Check(ResolveScript(standaloneQuery.Replace("items.Get", "other.Get")).Count == 0, "Other standalone API is not a query");
+Check(ResolveScript(standaloneQuery.Replace("items.Get", "unknown(); items.Get")).Count == 0, "Unknown call after declarations stops resolution");
+Check(ResolveScript(standaloneQuery + "items.Get(20,JSON.stringify(data));").Count == 1, "Standalone query stops before subsequent calls");
+Check(ResolveScript(standaloneQuery.Replace("Get(10,", "Get(context.Id,")).Count == 0, "Standalone dynamic target remains unresolved");
 Check(ScriptQueryPlanner.Analyze([scriptSource], Dbms.SQLServer).Indexes.Count == 0, "Missing target never invents an index");
 Check(ScriptQueryPlanner.Analyze([scriptSource, scriptTarget with { RecordCount = 1 }], Dbms.SQLServer).Indexes.Count == 0, "Target threshold respected");
 Check(ScriptQueryPlanner.Analyze([scriptSource, scriptTarget with { RecordCount = 1 }], Dbms.SQLServer, 0).Indexes.Count == 1, "Explicit lower threshold enables target candidate");
@@ -378,6 +400,20 @@ if (args.Contains("--integration"))
     var sites = await database.ReadSites(default);
     var completeLookupPlan = RecordIdLookupPlanner.Complete(new([], []), sites).Indexes;
     Check(Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live standard ID indexes cover table lookup candidates");
+    // 架空の設定から得た候補を3DB共通の専用テストDBで検証する。製品のplan専用制約は変えない。
+    var liveScriptSource = SiteWith(System.Text.Json.JsonSerializer.Serialize(new
+    {
+        ServerScripts = new[] { new { Body = "const query={View:{ColumnFilterHash:{ClassA:'A'}}}; items.Get(1,JSON.stringify(query));" } }
+    })) with { SiteId = 99 };
+    var liveScriptIndexes = ScriptQueryPlanner.Analyze([liveScriptSource, .. sites], dbms, 0).Indexes;
+    Check(liveScriptIndexes.Count == 1 && liveScriptIndexes.Single().Table == "Results", "Live script candidate targets Results");
+    var liveScriptKey = liveScriptIndexes.Single().Keys.Single(k => k.Column == "ClassA");
+    Check(liveScriptKey.Prefix == (dbms == Dbms.MySQL ? 100 : 0), "Live script candidate respects DB text-key rules");
+    await database.ValidateColumns(liveScriptIndexes, default);
+    await database.Apply(Reconciler.Plan(liveScriptIndexes, await database.ReadIndexes(default), false), default);
+    Check(Reconciler.Plan(liveScriptIndexes, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live script candidate roundtrip is idempotent");
+    Check((await database.ReadIndexes(default)).Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 3, "Live script candidate preserves standard indexes");
+    await database.Execute(d.Drop("Results", liveScriptIndexes.Single().Name));
     await database.Execute(d.Drop("Results", "standard_Results"));
     var missingLookupChanges = Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), false);
     Check(missingLookupChanges.Count(c => c.Kind == ChangeKind.Create) == 1 && missingLookupChanges.Single(c => c.Kind == ChangeKind.Create).Spec.Table == "Results", "Live missing record lookup creates only the uncovered table index");
@@ -662,4 +698,12 @@ if (args.Contains("--integration"))
     }
 
     Console.WriteLine($"Integration checks passed ({dbms}). Total checks: {passed}");
+}
+return 0;
+}
+catch (Exception error)
+{
+    // DB例外の本文や接続情報を表示せず、Windowsの未処理例外ダイアログも避ける。
+    Console.Error.WriteLine($"Test run failed ({error.GetType().Name}).");
+    return 1;
 }

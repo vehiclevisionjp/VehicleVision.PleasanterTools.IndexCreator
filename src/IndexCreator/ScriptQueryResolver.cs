@@ -36,6 +36,14 @@ public static class ScriptQueryResolver
         }
         foreach (var statement in statements)
         {
+            if (statement is ExpressionStatement { Expression: CallExpression standalone })
+            {
+                if (Query(standalone, variables) is { } query)
+                {
+                    result.Add(query);
+                }
+                return result;
+            }
             if (statement is not VariableDeclaration declaration)
             {
                 break;
@@ -46,15 +54,9 @@ public static class ScriptQueryResolver
                 {
                     return result;
                 }
-                if (item.Init is CallExpression call && IsCall(call, "items", "Get") && call.Arguments.Count == 2
-                    && Value(call.Arguments[0], variables, out var target) && target is double number
-                    && number > 0 && number <= 9007199254740991d && number == Math.Truncate(number)
-                    && call.Arguments[1] is CallExpression stringify && IsCall(stringify, "JSON", "stringify")
-                    && stringify.Arguments.Count == 1 && Value(stringify.Arguments[0], variables, out var data)
-                    && data is Dictionary<string, object?> query && query.TryGetValue("View", out var view)
-                    && view is Dictionary<string, object?>)
+                if (item.Init is CallExpression call && Query(call, variables) is { } resolved)
                 {
-                    result.Add(new((long)number, JsonSerializer.SerializeToElement(view)));
+                    result.Add(resolved);
                     // Get 内の副作用や後続の再代入を追跡しない。
                     return result;
                 }
@@ -71,6 +73,21 @@ public static class ScriptQueryResolver
             }
         }
         return result;
+    }
+
+    private static ScriptQuery? Query(CallExpression call, Dictionary<string, object?> variables)
+    {
+        if (IsCall(call, "items", "Get") && call.Arguments.Count == 2
+            && Value(call.Arguments[0], variables, out var target) && target is double number
+            && number > 0 && number <= 9007199254740991d && number == Math.Truncate(number)
+            && call.Arguments[1] is CallExpression stringify && IsCall(stringify, "JSON", "stringify")
+            && stringify.Arguments.Count == 1 && Value(stringify.Arguments[0], variables, out var data)
+            && data is Dictionary<string, object?> query && query.TryGetValue("View", out var view)
+            && view is Dictionary<string, object?>)
+        {
+            return new((long)number, JsonSerializer.SerializeToElement(view));
+        }
+        return null;
     }
 
     private static bool IsCall(CallExpression call, string owner, string method) =>
