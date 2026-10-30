@@ -47,7 +47,7 @@ public sealed class ChoicePlanner
                 // リンクかどうかは Links で判断する。Links は本体が保存時に ChoicesText から作る（[[N]] の行、または JSON 形式）。
                 // JSON 形式（JsonFormat）のリンクも、リンク先が Wiki なら [[N]] と同じく Wiki の本文の行を展開する。JSON のその他の指定（View・Lookups など）は Wiki では使わない。
                 // 本体の Column.Linked と同じく、SiteId のある設定が1つでもあればリンク項目で、他の行は選択肢に使われない。
-                var links = site.SiteSettings.Get("Links").Array().Where(l => l.Get("ColumnName").Text() == name && l.Get("SiteId").TryGetInt64(out var id) && id > 0).ToArray();
+                var links = site.SiteSettings.Get("Links").Array().Where(l => l.Get("ColumnName").Text() == name && l.Get("SiteId").TryInteger(out var id) && id > 0).ToArray();
                 if (links.Length > 0)
                 {
                     var wikis = links.Select((l, i) => new WikiChoiceSource(i + 1, WikiSite(l.Get("SiteId").GetInt64(), lookup))).ToArray();

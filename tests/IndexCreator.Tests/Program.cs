@@ -22,6 +22,29 @@ Check(Plan(Dbms.SQLServer, "{}").Indexes.Count == 1, "SQL Server default sort");
 Check(Plan(Dbms.MySQL, "{}").Indexes.Count == 1, "MySQL default sort");
 Check(Plan(Dbms.PostgreSQL, "{}").Indexes.Count == 0, "PostgreSQL primary key covers default sort");
 Check(new Planner(Dbms.SQLServer).Analyze([SiteWith("{}", 9999)]).Indexes.Count == 0, "Minimum record threshold");
+var smallLookupSites = new[] { SiteWith("{}", 1) with { SiteId = 10 }, SiteWith("{}", 0) with { SiteId = 20 } };
+var idLookupPlan = RecordIdLookupPlanner.Complete(new Planner(Dbms.SQLServer).Analyze(smallLookupSites), smallLookupSites);
+Check(idLookupPlan.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["ResultId"]), "Record lookup bypasses per-site record threshold");
+Check(idLookupPlan.Indexes.Single().SiteId == 10, "Record lookup shared by table uses lowest source site");
+Check(RecordIdLookupPlanner.Complete(idLookupPlan, smallLookupSites.Reverse().ToArray()).Indexes.Single().Name == idLookupPlan.Indexes.Single().Name, "Lookup completion is idempotent and source-order independent");
+foreach (var table in new[] { "Results", "Issues", "Wikis" })
+{
+    var lookupSite = SiteWith("{}", 0, table);
+    var lookup = RecordIdLookupPlanner.Complete(new([], []), [lookupSite]).Indexes.Single();
+    Check(lookup.Keys.Single().Column == table[..^1] + "Id", "Record lookup identifier maps " + table);
+    var standardLookup = new ExistingIndex(table, "standard_id", [new(table[..^1] + "Id")]);
+    var keptLookup = Reconciler.Plan([lookup], [standardLookup], true);
+    Check(keptLookup.Single().Kind == ChangeKind.Keep && keptLookup.Single().Name == "standard_id", "Standard lookup covers supplemental candidate " + table);
+    var createdLookup = new ExistingIndex(table, lookup.Name, lookup.Keys);
+    Check(Reconciler.Plan([lookup], [createdLookup], true).Single().Kind == ChangeKind.Keep, "Lookup survives subsequent apply with prune " + table);
+    Check(Reconciler.Plan([lookup], [standardLookup with { Valid = false }], false).Single().Kind == ChangeKind.Create, "Disabled standard lookup does not hide missing coverage " + table);
+    Check(Reconciler.Plan([lookup], [standardLookup with { Plain = false }], false).Single().Kind == ChangeKind.Create, "Filtered lookup does not cover all record IDs " + table);
+    Check(!new SqlDialect(Dbms.SQLServer, "dbo").Create(lookup).Contains("UNIQUE", StringComparison.Ordinal), "Lookup DDL does not restore a uniqueness constraint " + table);
+}
+Check(RecordIdLookupPlanner.Complete(new([], []), []).Indexes.Count == 0, "Empty database adds no invented table lookup");
+var siteLeading = new ExistingIndex("Results", "site_then_id", [new("SiteId"), new("ResultId")]);
+Check(Reconciler.Plan(idLookupPlan.Indexes, [siteLeading], false).Single().Kind == ChangeKind.Create, "Site-first index cannot cover ID-only lookup");
+Check(RecordIdLookupPlanner.Complete(new([], []), [SiteWith("{}") with { ReferenceType = "Sites" }]).Indexes.Count == 0, "Lookup completion does not manage Sites or Items");
 var filtered = """
     {"Columns":[{"ColumnName":"ClassA","ChoicesText":"A\nB"},{"ColumnName":"NumA","Nullable":true}],
      "Views":[{"ColumnFilterHash":{"ClassA":"A"},"ColumnSorterHash":{"NumA":"desc"}}]}
@@ -82,6 +105,10 @@ var multiTarget = relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{
 Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, multiTarget]).Indexes.All(i => i.Keys.Count == 2), "Multiple selection relation adds no record-ID covering candidate");
 Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, relatingTarget with { RecordCount = 1 }]).Diagnostics.Any(d => d.Message.Contains("below the minimum record threshold", StringComparison.Ordinal)), "Small relation master explains omission");
 Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource]).Diagnostics.Any(d => d.Message.Contains("target site 20 is unavailable", StringComparison.Ordinal)), "Unavailable relation master is diagnosed");
+var missingRelationLink = relatingSource with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30}],"RelatingColumns":[{"Columns":["ClassA","ClassB"]}]}""") };
+Check(new Planner(Dbms.PostgreSQL).Analyze([missingRelationLink]).Diagnostics.Any(d => d.Message.Contains("link settings are missing", StringComparison.Ordinal)), "Missing relation child is diagnosed instead of throwing on undefined JSON");
+var userTableLink = SiteWith("""{"Links":[{"TableName":"Users","ColumnName":"Owner","View":{"ColumnFilterHash":{"Disabled":"false"}}}]}""");
+Check(new Planner(Dbms.SQLServer).Analyze([userTableLink]).Indexes.Count == 1, "Non-site user choice does not require numeric SiteId");
 var orderedTarget = relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30},{"ColumnName":"ClassB","SiteId":30}],"EditorColumnHash":{"General":["ClassB","ClassA"]}}""") };
 Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, orderedTarget]).Indexes.Any(i => i.Keys.Select(k => k.Column).SequenceEqual(["SiteId", "ClassB", "IssueId"])), "Relation uses child master editor order rather than Links order");
 var ambiguousTarget = relatingTarget with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":30},{"ColumnName":"ClassB","SiteId":30}]}""") };
@@ -96,7 +123,10 @@ Check(new Planner(Dbms.PostgreSQL).Analyze([relatingSource, relatingTarget with 
 Reject(() => Plan(Dbms.PostgreSQL, """{"RelatingColumns":[{"Columns":"ClassA"}]}"""), "Malformed relation fails closed");
 Reject(() => Plan(Dbms.PostgreSQL, """{"Links":[{"SiteId":20,"View":{"ColumnFilterHash":[]}}]}"""), "Malformed linked view fails before target lookup");
 Reject(() => Plan(Dbms.PostgreSQL, """{"EditorColumnHash":{"General":"ClassA"}}"""), "Malformed editor order fails closed");
-Check(Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterExpressions":[{"ColumnName":"ClassA"}]}]}""").Diagnostics.Any(d => d.Message.Contains("ColumnFilterExpressions", StringComparison.Ordinal)), "Expression filters report unsupported planning");
+Check(Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterExpressions":{"ClassA":"[ClassB]"}}]}""").Diagnostics.Any(d => d.Message.Contains("ColumnFilterExpressions", StringComparison.Ordinal)), "Expression filter dictionary reports unsupported planning");
+Reject(() => Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterExpressions":[]}]}"""), "Expression filter arrays do not match Pleasanter view dictionaries");
+var expressionLink = linkSource with { SiteSettings = Json.Parse("""{"Links":[{"ColumnName":"ClassA","SiteId":20,"View":{"ColumnFilterExpressions":{"ClassA":"[ClassB]"}}}]}""") };
+Check(new Planner(Dbms.PostgreSQL).Analyze([expressionLink, linkTarget]).Diagnostics.Any(d => d.Message.Contains("ColumnFilterExpressions", StringComparison.Ordinal)), "Linked choice expression dictionary is accepted and diagnosed");
 Check(!Plan(Dbms.SQLServer, """{"Columns":[{"ColumnName":"ClassA","ChoicesText":"A"}],"Views":[{"ColumnFilterHash":{"ClassA":"A"},"ColumnFilterNegatives":["ClassA"]}]}""").Indexes.Any(i => i.Keys.Any(k => k.Column == "ClassA")), "Negative filters excluded");
 Check(Plan(Dbms.PostgreSQL, """{"Views":[{"ColumnFilterHash":{"and_1":"{\"Status\":\"[100]\"}"}}]}""").Indexes.Single().Keys[1].Column == "Status", "Nested AND filters");
 Check(!Plan(Dbms.SQLServer, """{"Views":[{"ColumnFilterHash":{"ClassA~2,ClassB":"A"}}]}""").Indexes.Any(i => i.Keys.Any(k => k.Column.Contains('~'))), "Joined filters excluded");
@@ -120,6 +150,8 @@ Check(Reconciler.Plan([], [existing], true).Single().Kind == ChangeKind.Drop, "O
 var shorter = new IndexSpec("Results", [new("SiteId"), new("ClassA")]);
 var reconciliation = Reconciler.Plan([shorter], [existing], true);
 Check(reconciliation[0].Kind == ChangeKind.Create && reconciliation[1].Kind == ChangeKind.Drop, "Replace owned covering index before prune");
+Check(Reconciler.Plan([shorter], [existing], false).Single().Kind == ChangeKind.Keep, "Existing wider managed index prevents duplicate when prune is off");
+Check(Reconciler.Plan([shorter], [existing with { Valid = false }], false).Single().Kind == ChangeKind.Create, "Invalid wider managed index cannot replace a valid candidate");
 Check(Reconciler.Plan([spec], [existing], false, true).Single().Kind == ChangeKind.Repair, "Force rebuild only owned matching index");
 Check(Reconciler.Plan([spec], [existing with { Name = "standard" }], false, true).Single().Kind == ChangeKind.Keep, "Force preserves standard index");
 var slash = Options.Parse(["_rds", "/p", "/opt/pleasanter app/Implem.Pleasanter", "/y"]);
@@ -236,7 +268,7 @@ Reject(() => new ChoicePlanner().Generate([Linked("[[30]]", wikiLink)], [new Sit
 var secondWiki = new Site(32, "Wikis", Json.Parse("{}"), 0, "Second");
 var twoLinks = new ChoicePlanner().Generate([Linked("[[32]]\n[[30]]", """[{"ColumnName":"ClassA","SiteId":32},{"ColumnName":"ClassA","SiteId":30}]""")], [wikiMaster, secondWiki]).Single();
 Check(twoLinks.WikiSources!.SequenceEqual([new WikiChoiceSource(1, 32), new WikiChoiceSource(2, 30)]), "Multiple Wiki links keep the Links order");
-Check(new ChoicePlanner().Generate([Linked("""[{"SiteId":30,"View":{"ColumnFilterExpressions":[]}}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]).Single().WikiSources!.Single().SiteId == 30, "JSON notation with extra settings still expands the Wiki body");
+Check(new ChoicePlanner().Generate([Linked("""[{"SiteId":30,"View":{"ColumnFilterExpressions":{}}}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster]).Single().WikiSources!.Single().SiteId == 30, "JSON notation with extra settings still expands the Wiki body");
 Reject(() => new ChoicePlanner().Generate([Linked("""[{"SiteId":30}]""", """[{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [new Site(30, "Results", Json.Parse("{}"), 0, "Table")]), "JSON-format links to tables stop");
 Check(new ChoicePlanner().Generate([Linked("""[{"SiteId":32},{"SiteId":30}]""", """[{"ColumnName":"ClassA","SiteId":32,"JsonFormat":true},{"ColumnName":"ClassA","SiteId":30,"JsonFormat":true}]""")], [wikiMaster, secondWiki]).Single().WikiSources!.Select(w => w.SiteId).SequenceEqual([32L, 30L]), "JSON-format links keep the Links order");
 Reject(() => new ChoicePlanner().Generate([Linked("""[{"SiteId":30}]""", "[]")], [wikiMaster]), "JSON notation without Links is not read as a plain choice");
@@ -302,6 +334,24 @@ if (args.Contains("--integration"))
         catch (UserError) { passed++; }
     }
     var sites = await database.ReadSites(default);
+    var completeLookupPlan = RecordIdLookupPlanner.Complete(new([], []), sites).Indexes;
+    Check(Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live standard ID indexes cover table lookup candidates");
+    await database.Execute(d.Drop("Results", "standard_Results"));
+    var missingLookupChanges = Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), false);
+    Check(missingLookupChanges.Count(c => c.Kind == ChangeKind.Create) == 1 && missingLookupChanges.Single(c => c.Kind == ChangeKind.Create).Spec.Table == "Results", "Live missing record lookup creates only the uncovered table index");
+    await database.Apply(missingLookupChanges, default);
+    Check(Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), true).All(c => c.Kind == ChangeKind.Keep), "Live record lookup repeat with prune is a no-op");
+    await using (System.Data.Common.DbConnection lookupQuery = dbms switch { Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(cs), Dbms.PostgreSQL => new Npgsql.NpgsqlConnection(cs), _ => new MySqlConnector.MySqlConnection(cs) })
+    {
+        await lookupQuery.OpenAsync();
+        await using var lookupCommand = lookupQuery.CreateCommand();
+        lookupCommand.CommandText = $"SELECT {d.Quote("SiteId")} FROM {d.Table("Results")} WHERE {d.Quote("ResultId")}=1";
+        Check(Convert.ToInt64(await lookupCommand.ExecuteScalarAsync()) == 1, "Live ID-only query preserves result on heap without standard lookup");
+    }
+    await database.Execute($"CREATE INDEX {d.Quote("standard_Results")} ON {d.Table("Results")} ({d.Quote("ResultId")})");
+    var restoredLookupChanges = Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), true);
+    Check(restoredLookupChanges.All(c => c.Kind == ChangeKind.Keep) && (await database.ReadIndexes(default)).Any(i => i.Name == "standard_Results"), "Live restored standard lookup is preserved alongside existing managed candidate");
+    await database.Apply(restoredLookupChanges, default);
     var desired = new Planner(dbms, 0).Analyze(sites).Indexes;
     Check(sites.Count == 3 && sites.All(s => s.RecordCount == 1), "Live site counts");
     var liveParents = await database.ReadSiteParents(default);

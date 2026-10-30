@@ -88,7 +88,9 @@ public static class Program
                 sites = Json.ReadSites(await File.ReadAllTextAsync(options.SitesFile!, cancel.Token));
             }
 
-            var analysis = new Planner(config.Dbms, options.MinRecords, options.IncludeFilters, options.MysqlPrefix).Analyze(sites);
+            var analysis = RecordIdLookupPlanner.Complete(
+                new Planner(config.Dbms, options.MinRecords, options.IncludeFilters, options.MysqlPrefix).Analyze(sites),
+                sites);
             if (database != null)
             {
                 await database.ValidateColumns(analysis.Indexes, cancel.Token);
