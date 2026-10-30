@@ -38,7 +38,7 @@ public static class ViewMutationPlanner
             var updates = Resolve(string.Join("\n", scripts.Select(s => s.Get("Body").Text())));
             if (updates == null || updates.Count == 0)
             {
-                notes.Add(new(site.SiteId, "View mutation body is not a complete sequence of literal assignments; no mutation candidate generated."));
+                notes.Add(new(site.SiteId, "View mutation body contains unresolved declarations, assignments or calls; no mutation candidate generated."));
                 continue;
             }
             foreach (var baseline in new[] { Json.Parse("{}") }.Concat(site.SiteSettings.Get("Views").Array()))
@@ -105,7 +105,7 @@ public static class ViewMutationPlanner
                 indexes.AddRange(plan.Indexes);
                 notes.AddRange(plan.Diagnostics);
             }
-            notes.Add(new(site.SiteId, "Literal View mutations were applied to the empty baseline and saved Views for review; runtime/session conditions are not reproduced."));
+            notes.Add(new(site.SiteId, "Resolved View mutations were applied to the empty baseline and saved Views for review; runtime/session conditions are not reproduced."));
         }
         return new(indexes.DistinctBy(i => i.Signature).ToArray(), notes.Distinct().ToArray());
     }
@@ -123,8 +123,26 @@ public static class ViewMutationPlanner
             throw new UserError("View mutation JavaScript parsing failed.");
         }
         var updates = new List<Update>();
+        var constants = new Dictionary<string, Node>(StringComparer.Ordinal);
         foreach (var statement in root.ChildNodes)
         {
+            if (statement is VariableDeclaration declaration)
+            {
+                if (declaration.Kind != VariableDeclarationKind.Const)
+                {
+                    return null;
+                }
+                foreach (var item in declaration.Declarations)
+                {
+                    if (item.Id is not Identifier name || name.Name == "view"
+                        || Constant(item.Init, constants) is not { } literal
+                        || !constants.TryAdd(name.Name, literal))
+                    {
+                        return null;
+                    }
+                }
+                continue;
+            }
             if (statement is ExpressionStatement { Expression: CallExpression clear }
                 && clear.Callee is MemberExpression clearMethod && clearMethod.Object is Identifier { Name: "view" }
                 && Property(clearMethod) == "ClearFilters")
@@ -140,12 +158,12 @@ public static class ViewMutationPlanner
                 && call.Callee is MemberExpression method && method.Object is Identifier { Name: "view" }
                 && Property(method) == "FilterNegative")
             {
-                if (call.Arguments.Count is not (1 or 2) || call.Arguments[0] is not StringLiteral name
-                    || !SupportedColumn(name.Value) || call.Arguments.Count == 2 && call.Arguments[1] is not BooleanLiteral)
+                if (call.Arguments.Count is not (1 or 2) || Constant(call.Arguments[0], constants) is not StringLiteral name
+                    || !SupportedColumn(name.Value) || call.Arguments.Count == 2 && Constant(call.Arguments[1], constants) is not BooleanLiteral)
                 {
                     return null;
                 }
-                var negative = call.Arguments.Count == 1 || ((BooleanLiteral)call.Arguments[1]).Value;
+                var negative = call.Arguments.Count == 1 || ((BooleanLiteral)Constant(call.Arguments[1], constants)!).Value;
                 updates.Add(new("Negatives", name.Value, negative ? "true" : "false"));
                 continue;
             }
@@ -157,7 +175,7 @@ public static class ViewMutationPlanner
             {
                 return null;
             }
-            var value = assignment.Right switch
+            var value = Constant(assignment.Right, constants) switch
             {
                 StringLiteral literal => literal.Value,
                 NumericLiteral number when Property(group) is "SearchTypes" or "Sorters" => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -189,6 +207,13 @@ public static class ViewMutationPlanner
         }
         return updates;
     }
+    // プリミティブのconstだけを追跡し、式評価や参照型の別名は扱わない。
+    private static Node? Constant(Node? node, IReadOnlyDictionary<string, Node> constants) => node switch
+    {
+        StringLiteral or NumericLiteral or BooleanLiteral => node,
+        Identifier name when constants.TryGetValue(name.Name, out var value) => value,
+        _ => null
+    };
     private static bool SupportedColumn(string column) => Regex.IsMatch(column, "^(Status|Manager|Owner|Creator|Updator|CreatedTime|UpdatedTime|StartTime|CompletionTime|ResultId|IssueId|Class([A-Z]|[0-9]{3})|Num([A-Z]|[0-9]{3})|Date([A-Z]|[0-9]{3})|Check([A-Z]|[0-9]{3}))$");
     private static string Property(MemberExpression member) => member.Computed
         ? member.Property is StringLiteral literal ? literal.Value : ""
