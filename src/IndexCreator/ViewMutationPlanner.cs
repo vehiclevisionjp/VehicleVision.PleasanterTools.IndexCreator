@@ -45,7 +45,7 @@ public static class ViewMutationPlanner
             {
                 Json.ValidateView(baseline);
                 var changed = JsonNode.Parse(baseline.GetRawText())!.AsObject();
-                foreach (var update in updates)
+                foreach (var update in updates.Where(u => u.Group != "Negatives"))
                 {
                     var hashName = update.Group switch
                     {
@@ -69,6 +69,26 @@ public static class ViewMutationPlanner
                                 negatives.RemoveAt(i);
                             }
                         }
+                    }
+                }
+                // 本体はフィルター値を反映した後に明示的な否定指定を適用する。
+                foreach (var update in updates.Where(u => u.Group == "Negatives"))
+                {
+                    var negatives = changed["ColumnFilterNegatives"] as JsonArray ?? new JsonArray();
+                    if (changed["ColumnFilterNegatives"] == null)
+                    {
+                        changed["ColumnFilterNegatives"] = negatives;
+                    }
+                    for (var i = negatives.Count - 1; i >= 0; i--)
+                    {
+                        if (negatives[i]?.ToString() == update.Column)
+                        {
+                            negatives.RemoveAt(i);
+                        }
+                    }
+                    if (update.Value == "true")
+                    {
+                        negatives.Add(update.Column);
                     }
                 }
                 var plan = new Planner(dbms, minRecords, mysqlPrefix: mysqlPrefix).AnalyzeQuery(site, Json.Parse(changed.ToJsonString()));
@@ -95,6 +115,19 @@ public static class ViewMutationPlanner
         var updates = new List<Update>();
         foreach (var statement in root.ChildNodes)
         {
+            if (statement is ExpressionStatement { Expression: CallExpression call }
+                && call.Callee is MemberExpression method && method.Object is Identifier { Name: "view" }
+                && Property(method) == "FilterNegative")
+            {
+                if (call.Arguments.Count is not (1 or 2) || call.Arguments[0] is not StringLiteral name
+                    || !SupportedColumn(name.Value) || call.Arguments.Count == 2 && call.Arguments[1] is not BooleanLiteral)
+                {
+                    return null;
+                }
+                var negative = call.Arguments.Count == 1 || ((BooleanLiteral)call.Arguments[1]).Value;
+                updates.Add(new("Negatives", name.Value, negative ? "true" : "false"));
+                continue;
+            }
             if (statement is not ExpressionStatement { Expression: AssignmentExpression assignment }
                 || assignment.Operator != Operator.Assignment
                 || assignment.Left is not MemberExpression member
@@ -114,7 +147,7 @@ public static class ViewMutationPlanner
                 return null;
             }
             var column = Property(member);
-            if (!Regex.IsMatch(column, "^(Status|Manager|Owner|Creator|Updator|CreatedTime|UpdatedTime|StartTime|CompletionTime|ResultId|IssueId|Class([A-Z]|[0-9]{3})|Num([A-Z]|[0-9]{3})|Date([A-Z]|[0-9]{3})|Check([A-Z]|[0-9]{3}))$"))
+            if (!SupportedColumn(column))
             {
                 return null;
             }
@@ -131,6 +164,7 @@ public static class ViewMutationPlanner
         }
         return updates;
     }
+    private static bool SupportedColumn(string column) => Regex.IsMatch(column, "^(Status|Manager|Owner|Creator|Updator|CreatedTime|UpdatedTime|StartTime|CompletionTime|ResultId|IssueId|Class([A-Z]|[0-9]{3})|Num([A-Z]|[0-9]{3})|Date([A-Z]|[0-9]{3})|Check([A-Z]|[0-9]{3}))$");
     private static string Property(MemberExpression member) => member.Computed
         ? member.Property is StringLiteral literal ? literal.Value : ""
         : member.Property is Identifier identifier ? identifier.Name : "";
