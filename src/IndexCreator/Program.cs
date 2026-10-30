@@ -38,6 +38,7 @@ public static class Program
                       /min-records <count>        Minimum records per site (default: 10000)
                       /mysql-prefix <1..191>      TEXT prefix length (default: 100)
                       /include-filter-columns     Include filter controls
+                      /include-script-queries     Plan resolved script queries for review (plan only; no prune)
                       /offline                    Allow blocking index operations (maintenance window)
                       /lock-timeout <seconds>     Maximum lock wait per DDL before retrying (default: 5)
                       /exclude-tree <id,...>      Views: skip these sites and every site below them
@@ -91,6 +92,13 @@ public static class Program
             var analysis = RecordIdLookupPlanner.Complete(
                 new Planner(config.Dbms, options.MinRecords, options.IncludeFilters, options.MysqlPrefix).Analyze(sites),
                 sites);
+            if (options.IncludeScriptQueries)
+            {
+                var scripts = ScriptQueryPlanner.Analyze(sites, config.Dbms, options.MinRecords, options.MysqlPrefix);
+                analysis = RecordIdLookupPlanner.Complete(new(
+                    analysis.Indexes.Concat(scripts.Indexes).ToArray(),
+                    analysis.Diagnostics.Concat(scripts.Diagnostics).ToArray()), sites);
+            }
             if (database != null)
             {
                 await database.ValidateColumns(analysis.Indexes, cancel.Token);

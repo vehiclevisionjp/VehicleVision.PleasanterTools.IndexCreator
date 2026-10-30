@@ -3,11 +3,11 @@ using System.Text.Json;
 
 namespace VehicleVision.PleasanterTools.IndexCreator;
 
-public sealed record Options(string Action, string? Path, string? SitesFile, string? DbmsName, string? Schema, long MinRecords, int MysqlPrefix, bool IncludeFilters, bool Offline, bool Prune, bool Yes, string? Output, bool Force = false, int LockTimeout = 5, SiteExclusion? Exclusion = null, string ColumnNames = "label")
+public sealed record Options(string Action, string? Path, string? SitesFile, string? DbmsName, string? Schema, long MinRecords, int MysqlPrefix, bool IncludeFilters, bool Offline, bool Prune, bool Yes, string? Output, bool Force = false, int LockTimeout = 5, SiteExclusion? Exclusion = null, string ColumnNames = "label", bool IncludeScriptQueries = false)
 {
     // CodeDefiner の引数と同じ書式。最初の引数が操作で、オプションは / で始まる。
     // 値のあるオプションは次の引数を値にする。パスを取るもの（p / sites / output）は / で始まる値も消費する（Linux の絶対パス）。
-    private static readonly string[] FlagOptions = ["y", "f", "c", "prune", "offline", "include-filter-columns"];
+    private static readonly string[] FlagOptions = ["y", "f", "c", "prune", "offline", "include-filter-columns", "include-script-queries"];
     private static readonly string[] PathOptions = ["p", "sites", "output"];
     private static readonly string[] ValueOptions = [.. PathOptions, "dbms", "schema", "min-records", "mysql-prefix", "lock-timeout", "exclude-tree", "exclude-site", "names"];
     public static Options Parse(string[] args)
@@ -117,7 +117,11 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
             throw new UserError("/names applies only to views.");
         }
 
-        return new(action, V("p"), V("sites"), V("dbms"), V("schema"), Number("min-records", 10000, long.MaxValue), prefix, flags.Contains("include-filter-columns"), flags.Contains("offline"), flags.Contains("prune"), flags.Contains("y"), V("output"), flags.Contains("f"), lockTimeout, exclusion, names);
+        if (flags.Contains("include-script-queries") && (action != "plan" || flags.Contains("prune")))
+        {
+            throw new UserError("/include-script-queries requires plan without /prune.");
+        }
+        return new(action, V("p"), V("sites"), V("dbms"), V("schema"), Number("min-records", 10000, long.MaxValue), prefix, flags.Contains("include-filter-columns"), flags.Contains("offline"), flags.Contains("prune"), flags.Contains("y"), V("output"), flags.Contains("f"), lockTimeout, exclusion, names, flags.Contains("include-script-queries"));
     }
 }
 public sealed record Configuration(Dbms Dbms, string Schema, string ConnectionString, bool DisableIndexChangeDetection, int Timeout)

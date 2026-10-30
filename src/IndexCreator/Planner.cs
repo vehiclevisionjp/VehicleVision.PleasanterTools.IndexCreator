@@ -119,6 +119,26 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
             }
         }
     }
+    public Analysis AnalyzeQuery(Site target, JsonElement view)
+    {
+        indexes.Clear(); diagnostics.Clear();
+        Json.ValidateSettings(target.SiteSettings);
+        Json.ValidateView(view);
+        if (target.ReferenceType is not ("Results" or "Issues"))
+        {
+            Note(target, "Script query target is not Results or Issues; no candidate generated.");
+        }
+        else if (target.RecordCount < minRecords)
+        {
+            Note(target, "Script query target is below the minimum record threshold; no candidate generated.");
+        }
+        else
+        {
+            AnalyzeView(target, view, Links(target));
+        }
+        return new(indexes.DistinctBy(i => i.Signature).ToArray(), diagnostics.Distinct().ToArray());
+    }
+
     public Analysis Analyze(IReadOnlyList<Site> sites)
     {
         indexes.Clear(); diagnostics.Clear();

@@ -25,6 +25,20 @@ Check(ScriptNotes("view.Filters[column] = secret;").Single().Message.Contains("d
 Check(ScriptNotes("const data={View:{ColumnFilterHash:{CheckB:'PRIVATE_VALUE'},ColumnSorterHash:{ClassA:'asc'}}}; items.Get(10,JSON.stringify(data));").Count == 3, "Query declarations and calls diagnosed separately");
 IReadOnlyList<ScriptQuery> ResolveScript(string body) => ScriptQueryResolver.Resolve(new Acornima.Parser().ParseScript(body));
 var literalQuery = "let data={View:{ColumnFilterHash:{CheckB:'true'},ColumnSorterHash:{ClassA:'asc'}}}; let records=items.Get(10,JSON.stringify(data));";
+var scriptSource = SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = literalQuery } } }), 1) with { SiteId = 99 };
+var scriptTarget = SiteWith("{}") with { SiteId = 10 };
+foreach (var scriptDb in new[] { Dbms.SQLServer, Dbms.PostgreSQL, Dbms.MySQL })
+{
+    var scriptPlan = ScriptQueryPlanner.Analyze([scriptSource, scriptTarget], scriptDb);
+    Check(scriptPlan.Indexes.Single().SiteId == 10 && scriptPlan.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(new[] { "SiteId", "CheckB" }), "Script candidates use target, not source; wrapped sort excluded");
+}
+Check(ScriptQueryPlanner.Analyze([scriptSource], Dbms.SQLServer).Indexes.Count == 0, "Missing target never invents an index");
+Check(ScriptQueryPlanner.Analyze([scriptSource, scriptTarget with { RecordCount = 1 }], Dbms.SQLServer).Indexes.Count == 0, "Target threshold respected");
+Check(ScriptQueryPlanner.Analyze([scriptSource, scriptTarget with { RecordCount = 1 }], Dbms.SQLServer, 0).Indexes.Count == 1, "Explicit lower threshold enables target candidate");
+Check(ScriptQueryPlanner.Analyze([scriptSource, scriptSource with { SiteId = 98 }, scriptTarget], Dbms.SQLServer).Indexes.Count == 1, "Duplicate script queries compacted");
+Check(!Options.Parse(["plan"]).IncludeScriptQueries && Options.Parse(["plan", "/include-script-queries"]).IncludeScriptQueries, "Script planning is opt-in");
+Reject(() => Options.Parse(["_rds", "/include-script-queries"]), "Script candidates cannot be automatically applied");
+Reject(() => Options.Parse(["plan", "/include-script-queries", "/prune"]), "Partial script analysis cannot drive pruning");
 Check(ResolveScript(literalQuery).Single().TargetSiteId == 10, "Literal query resolves target site");
 Check(ResolveScript("try {" + literalQuery + "} catch(e){}").Count == 1, "Whole-script try wrapper supported");
 Check(ResolveScript("unknown(); try {" + literalQuery + "} catch(e){}").Count == 0, "Prior side effects before try rejected");
