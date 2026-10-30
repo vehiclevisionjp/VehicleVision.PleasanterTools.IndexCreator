@@ -32,6 +32,10 @@ var literalQuery = "let data={View:{ColumnFilterHash:{CheckB:'true'},ColumnSorte
 var scriptSource = SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = literalQuery } } }), 1) with { SiteId = 99 };
 var scriptTarget = SiteWith("{}") with { SiteId = 10 };
 var standaloneQuery = literalQuery.Replace("let records=", "");
+var literalJson = """{"View":{"ColumnFilterHash":{"CheckB":"true"},"ColumnSorterHash":{"ClassA":"asc"}}}""";
+string JsonStringQuery(string json) => "items.Get(10," + System.Text.Json.JsonSerializer.Serialize(json) + ");";
+var jsonStringQuery = JsonStringQuery(literalJson);
+var jsonStringSource = scriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = jsonStringQuery } } })) };
 var standaloneSource = scriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = standaloneQuery } } })) };
 var disabledSource = scriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new { ServerScriptsAllDisabled = true, ServerScripts = new[] { new { Body = literalQuery }, new { Body = "invalid {" } } })) };
 Check(ServerScriptDiagnostics.Analyze([disabledSource]).Count == 0, "Site-wide disabled scripts are not parsed or diagnosed");
@@ -40,10 +44,26 @@ foreach (var scriptDb in new[] { Dbms.SQLServer, Dbms.PostgreSQL, Dbms.MySQL })
     var scriptPlan = ScriptQueryPlanner.Analyze([scriptSource, scriptTarget], scriptDb);
     Check(scriptPlan.Indexes.Single().SiteId == 10 && scriptPlan.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(new[] { "SiteId", "CheckB" }), "Script candidates use target, not source; wrapped sort excluded");
     Check(ScriptQueryPlanner.Analyze([standaloneSource, scriptTarget], scriptDb).Indexes.Single().Signature == scriptPlan.Indexes.Single().Signature, "Standalone query has the same candidate on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([jsonStringSource, scriptTarget], scriptDb).Indexes.Single().Signature == scriptPlan.Indexes.Single().Signature, "Literal JSON has the same candidate on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([jsonStringSource, scriptTarget with { ReferenceType = "Issues" }], scriptDb).Indexes.Single().Table == "Issues", "Literal JSON also targets Issues on " + scriptDb);
+    Check(ScriptQueryPlanner.Analyze([jsonStringSource, scriptTarget with { RecordCount = 1 }], scriptDb).Indexes.Count == 0, "Literal JSON respects target threshold on " + scriptDb);
     Check(ScriptQueryPlanner.Analyze([disabledSource, scriptTarget], scriptDb).Indexes.Count == 0, "Site-wide disabled scripts produce no candidates on " + scriptDb);
     Check(ScriptQueryPlanner.Analyze([standaloneSource, scriptTarget with { RecordCount = 1 }], scriptDb).Indexes.Count == 0, "Standalone query respects threshold on " + scriptDb);
 }
 Check(ResolveScript(standaloneQuery).Count == 1, "Standalone Get resolved");
+Check(ResolveScript(jsonStringQuery).Single().View.Get("ColumnFilterHash").Get("CheckB").Text() == "true", "Literal JSON survives parser document disposal");
+Check(ResolveScript("let records=" + jsonStringQuery).Count == 1, "Literal JSON in variable initializer resolved");
+Check(ResolveScript("const request=" + System.Text.Json.JsonSerializer.Serialize(literalJson) + "; items.Get(10,request);").Count == 1, "Literal JSON string variable resolved");
+Check(ResolveScript("try {" + jsonStringQuery + "} catch(e){}").Count == 1, "Literal JSON in whole-script try resolved");
+foreach (var invalidJson in new[] { "invalid PRIVATE_VALUE", "[]", "null", "{}", "{\"View\":null}", "{\"View\":[]}", "{\"View\":{},\"View\":{}}", "{\"View\":{},\"view\":{}}", "{\"View\":{\"ColumnFilterHash\":{\"Status\":\"100\",\"Status\":\"200\"}}}", "{\"View\":{\"ColumnFilterHash\":{\"Status\":\"100\",\"status\":\"200\"}}}", "{\"View\":{},}", "{/*comment*/\"View\":{}}" })
+{
+    Check(ResolveScript(JsonStringQuery(invalidJson)).Count == 0, "Invalid or ambiguous JSON does not resolve");
+}
+Check(ResolveScript("unknown();" + jsonStringQuery).Count == 0, "Literal JSON does not bypass prior effects");
+Check(ResolveScript("const request=" + System.Text.Json.JsonSerializer.Serialize(literalJson) + "; request=other; items.Get(10,request);").Count == 0, "Reassigned JSON string does not resolve");
+Check(ResolveScript("items.Get(10,context.Request); ").Count == 0, "Runtime JSON string does not resolve");
+Check(ScriptNotes(JsonStringQuery("invalid PRIVATE_VALUE")).All(d => !d.Message.Contains("PRIVATE_VALUE")), "Malformed JSON does not leak parser input");
+Check(ScriptNotes(JsonStringQuery("{\"View\":{\"ColumnFilterHash\":{\"ClassA\":\"PRIVATE_VALUE\"}}}")).All(d => !d.Message.Contains("PRIVATE_VALUE")), "Resolved JSON does not leak filter values");
 Check(ResolveScript("try {" + standaloneQuery + "} catch(e){}").Count == 1, "Standalone Get in whole-script try resolved");
 Check(ResolveScript("items.Get(10,JSON.stringify({View:{ColumnFilterHash:{Status:'100'}}}));").Count == 1, "Standalone inline View resolved");
 foreach (var standalonePrefix in new[] { "unknown();", "if(context.Id){}", "const items=other;", "const JSON=other;" })
@@ -406,12 +426,18 @@ if (args.Contains("--integration"))
         ServerScripts = new[] { new { Body = "const query={View:{ColumnFilterHash:{ClassA:'A'}}}; items.Get(1,JSON.stringify(query));" } }
     })) with { SiteId = 99 };
     var liveScriptIndexes = ScriptQueryPlanner.Analyze([liveScriptSource, .. sites], dbms, 0).Indexes;
+    var liveJsonSource = liveScriptSource with { SiteSettings = Json.Parse(System.Text.Json.JsonSerializer.Serialize(new
+    {
+        ServerScripts = new[] { new { Body = "items.Get(1,'{\"View\":{\"ColumnFilterHash\":{\"ClassA\":\"A\"}}}');" } }
+    })) };
+    Check(ScriptQueryPlanner.Analyze([liveJsonSource, .. sites], dbms, 0).Indexes.Single().Signature == liveScriptIndexes.Single().Signature, "Live literal JSON shares the same physical candidate");
     Check(liveScriptIndexes.Count == 1 && liveScriptIndexes.Single().Table == "Results", "Live script candidate targets Results");
     var liveScriptKey = liveScriptIndexes.Single().Keys.Single(k => k.Column == "ClassA");
     Check(liveScriptKey.Prefix == (dbms == Dbms.MySQL ? 100 : 0), "Live script candidate respects DB text-key rules");
     await database.ValidateColumns(liveScriptIndexes, default);
     await database.Apply(Reconciler.Plan(liveScriptIndexes, await database.ReadIndexes(default), false), default);
     Check(Reconciler.Plan(liveScriptIndexes, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live script candidate roundtrip is idempotent");
+    Check(Reconciler.Plan(ScriptQueryPlanner.Analyze([liveJsonSource, .. sites], dbms, 0).Indexes, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live literal JSON reuses the existing script index");
     Check((await database.ReadIndexes(default)).Count(i => i.Name.StartsWith("standard_", StringComparison.Ordinal)) == 3, "Live script candidate preserves standard indexes");
     await database.Execute(d.Drop("Results", liveScriptIndexes.Single().Name));
     await database.Execute(d.Drop("Results", "standard_Results"));
