@@ -17,6 +17,48 @@ void Reject(Action action, string name)
 }
 Site SiteWith(string settings, long count = 20000, string table = "Results") => new(1, table, Json.Parse(settings), count);
 Analysis Plan(Dbms db, string settings) => new Planner(db).Analyze([SiteWith(settings)]);
+IReadOnlyList<Diagnostic> ScriptNotes(string body, bool disabled = false) => ServerScriptDiagnostics.Analyze([SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = body, Disabled = disabled } } }))]);
+Check(ScriptNotes("// items.Get(1)\nconst text='view.Filters.ClassA=1';").Count == 0, "Script comments and strings are not calls");
+Check(ScriptNotes("view.Filters.ClassA = secret;").Single().Message.Contains("ClassA"), "Dynamic filter values retain column evidence");
+Check(ScriptNotes("view['Sorters']['NumA']='desc';").Single().Message.Contains("Sorters"), "Literal bracket sorter syntax");
+Check(ScriptNotes("view.Filters[column] = secret;").Single().Message.Contains("dynamic/unsupported"), "Computed column remains unresolved");
+Check(ScriptNotes("const data={View:{ColumnFilterHash:{CheckB:'PRIVATE_VALUE'},ColumnSorterHash:{ClassA:'asc'}}}; items.Get(10,JSON.stringify(data));").Count == 3, "Query declarations and calls diagnosed separately");
+IReadOnlyList<ScriptQuery> ResolveScript(string body) => ScriptQueryResolver.Resolve(new Acornima.Parser().ParseScript(body));
+var literalQuery = "let data={View:{ColumnFilterHash:{CheckB:'true'},ColumnSorterHash:{ClassA:'asc'}}}; let records=items.Get(10,JSON.stringify(data));";
+var scriptSource = SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = literalQuery } } }), 1) with { SiteId = 99 };
+var scriptTarget = SiteWith("{}") with { SiteId = 10 };
+foreach (var scriptDb in new[] { Dbms.SQLServer, Dbms.PostgreSQL, Dbms.MySQL })
+{
+    var scriptPlan = ScriptQueryPlanner.Analyze([scriptSource, scriptTarget], scriptDb);
+    Check(scriptPlan.Indexes.Single().SiteId == 10 && scriptPlan.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(new[] { "SiteId", "CheckB" }), "Script candidates use target, not source; wrapped sort excluded");
+}
+Check(ScriptQueryPlanner.Analyze([scriptSource], Dbms.SQLServer).Indexes.Count == 0, "Missing target never invents an index");
+Check(ScriptQueryPlanner.Analyze([scriptSource, scriptTarget with { RecordCount = 1 }], Dbms.SQLServer).Indexes.Count == 0, "Target threshold respected");
+Check(ScriptQueryPlanner.Analyze([scriptSource, scriptTarget with { RecordCount = 1 }], Dbms.SQLServer, 0).Indexes.Count == 1, "Explicit lower threshold enables target candidate");
+Check(ScriptQueryPlanner.Analyze([scriptSource, scriptSource with { SiteId = 98 }, scriptTarget], Dbms.SQLServer).Indexes.Count == 1, "Duplicate script queries compacted");
+Check(!Options.Parse(["plan"]).IncludeScriptQueries && Options.Parse(["plan", "/include-script-queries"]).IncludeScriptQueries, "Script planning is opt-in");
+Reject(() => Options.Parse(["_rds", "/include-script-queries"]), "Script candidates cannot be automatically applied");
+Reject(() => Options.Parse(["plan", "/include-script-queries", "/prune"]), "Partial script analysis cannot drive pruning");
+Check(ResolveScript(literalQuery).Single().TargetSiteId == 10, "Literal query resolves target site");
+Check(ResolveScript("try {" + literalQuery + "} catch(e){}").Count == 1, "Whole-script try wrapper supported");
+Check(ResolveScript("unknown(); try {" + literalQuery + "} catch(e){}").Count == 0, "Prior side effects before try rejected");
+Check(ResolveScript(literalQuery).Single().View.Get("ColumnFilterHash").Get("CheckB").Text() == "true", "Literal view retained structurally");
+Check(ResolveScript("const target=10;" + literalQuery.Replace("Get(10,", "Get(target,")).Count == 1, "Scalar target variable resolved");
+foreach (var scriptPrefix in new[] { "unknown();", "if(context.Id){}", "const items=other;", "const JSON=other;", "const {items}=other;" })
+{
+    Check(ResolveScript(scriptPrefix + literalQuery).Count == 0, "Unknown effects or bindings do not resolve query");
+}
+Check(ResolveScript(literalQuery.Replace("let records=", "data.View.ColumnFilterHash.CheckB='false'; let records=")).Count == 0, "Mutation invalidates literal query");
+Check(ResolveScript(literalQuery + "class items {}").Count == 0, "Later lexical API shadow rejected");
+Check(ResolveScript(literalQuery.Replace("'true'", "context.UserId")).Count == 0, "Runtime values not resolved");
+Check(ResolveScript(literalQuery.Replace("CheckB:'true'", "...other")).Count == 0, "Object spread not resolved");
+Check(ResolveScript(literalQuery.Replace("CheckB:'true'", "get CheckB(){return 'true'}")).Count == 0, "Getter never evaluated");
+Check(ResolveScript(literalQuery.Replace("Get(10,", "Get(10.5,")).Count == 0, "Fractional target rejected");
+Check(ScriptNotes("const data={ColumnFilterHash:{'PRIVATE_KEY':'PRIVATE_VALUE'}};").All(d => !d.Message.Contains("PRIVATE")), "Arbitrary keys and values are not logged");
+Check(ScriptNotes("invalid {", true).Count == 0, "Disabled script skipped");
+Reject(() => ScriptNotes("invalid {"), "Malformed script stops analysis");
+Check(ScriptNotes("if (context.Id) return; items.Get(model.ClassA);").Count == 1, "Top-level return supported without execution");
+Check(ScriptNotes("function f(items){items.Get(1);}").Single().Message.Contains("Possible"), "Shadowed API is not asserted as definite use");
 
 Check(Plan(Dbms.SQLServer, "{}").Indexes.Count == 1, "SQL Server default sort");
 Check(Plan(Dbms.MySQL, "{}").Indexes.Count == 1, "MySQL default sort");

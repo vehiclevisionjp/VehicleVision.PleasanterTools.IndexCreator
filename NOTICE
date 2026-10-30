@@ -5,6 +5,7 @@ Source: https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCr
 
 Direct dependencies (verified 2026-10-07):
 NLog 6.2.2 - BSD-3-Clause - https://github.com/NLog/NLog
+Acornima 1.9.1 - BSD-3-Clause - https://github.com/adams85/acornima
 Microsoft.Data.SqlClient 7.1.1 - MIT - https://github.com/dotnet/SqlClient
 Npgsql 10.0.3 - PostgreSQL License - https://github.com/npgsql/npgsql
 MySqlConnector 2.6.2 - MIT - https://github.com/mysql-net/MySqlConnector
