@@ -145,7 +145,7 @@ public static class ViewMutationPlanner
             }
             if (statement is ExpressionStatement { Expression: CallExpression clear }
                 && clear.Callee is MemberExpression clearMethod && clearMethod.Object is Identifier { Name: "view" }
-                && Property(clearMethod) == "ClearFilters")
+                && Property(clearMethod, constants) == "ClearFilters")
             {
                 if (clear.Arguments.Count != 0)
                 {
@@ -156,7 +156,7 @@ public static class ViewMutationPlanner
             }
             if (statement is ExpressionStatement { Expression: CallExpression call }
                 && call.Callee is MemberExpression method && method.Object is Identifier { Name: "view" }
-                && Property(method) == "FilterNegative")
+                && Property(method, constants) == "FilterNegative")
             {
                 if (call.Arguments.Count is not (1 or 2) || Constant(call.Arguments[0], constants) is not StringLiteral name
                     || !SupportedColumn(name.Value) || call.Arguments.Count == 2 && Constant(call.Arguments[1], constants) is not BooleanLiteral)
@@ -171,41 +171,39 @@ public static class ViewMutationPlanner
                 || assignment.Operator != Operator.Assignment
                 || assignment.Left is not MemberExpression member
                 || member.Object is not MemberExpression group || group.Object is not Identifier { Name: "view" }
-                || Property(group) is not ("Filters" or "Sorters" or "SearchTypes"))
+                || Property(group, constants) is not ("Filters" or "Sorters" or "SearchTypes"))
             {
                 return null;
             }
             var value = Constant(assignment.Right, constants) switch
             {
                 StringLiteral literal => literal.Value,
-                NumericLiteral number when Property(group) is "SearchTypes" or "Sorters" => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                NumericLiteral number when Property(group, constants) is "SearchTypes" or "Sorters" => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 _ => null
             };
             if (value == null)
             {
                 return null;
             }
-            var column = member.Computed
-                ? Constant(member.Property, constants) is StringLiteral key ? key.Value : ""
-                : Property(member);
+            var column = Property(member, constants);
             if (!SupportedColumn(column))
             {
                 return null;
             }
-            if (Property(group) == "Sorters")
+            if (Property(group, constants) == "Sorters")
             {
                 value = value switch { "0" => "asc", "1" => "desc", _ => value };
             }
-            if (Property(group) == "Sorters" && value is not ("asc" or "desc"))
+            if (Property(group, constants) == "Sorters" && value is not ("asc" or "desc"))
             {
                 return null;
             }
-            if (Property(group) == "SearchTypes" && value is not
+            if (Property(group, constants) == "SearchTypes" && value is not
                 ("PartialMatch" or "ExactMatch" or "ForwardMatch" or "PartialMatchMultiple" or "ExactMatchMultiple" or "ForwardMatchMultiple" or "1" or "2" or "3" or "11" or "12" or "13"))
             {
                 return null;
             }
-            updates.Add(new(Property(group), column, value));
+            updates.Add(new(Property(group, constants), column, value));
         }
         return updates;
     }
@@ -217,7 +215,7 @@ public static class ViewMutationPlanner
         _ => null
     };
     private static bool SupportedColumn(string column) => Regex.IsMatch(column, "^(Status|Manager|Owner|Creator|Updator|CreatedTime|UpdatedTime|StartTime|CompletionTime|ResultId|IssueId|Class([A-Z]|[0-9]{3})|Num([A-Z]|[0-9]{3})|Date([A-Z]|[0-9]{3})|Check([A-Z]|[0-9]{3}))$");
-    private static string Property(MemberExpression member) => member.Computed
-        ? member.Property is StringLiteral literal ? literal.Value : ""
+    private static string Property(MemberExpression member, IReadOnlyDictionary<string, Node> constants) => member.Computed
+        ? Constant(member.Property, constants) is StringLiteral literal ? literal.Value : ""
         : member.Property is Identifier identifier ? identifier.Name : "";
 }

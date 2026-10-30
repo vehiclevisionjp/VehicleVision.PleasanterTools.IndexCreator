@@ -65,6 +65,17 @@ public static class ServerScriptDiagnostics
                     {
                         message = $"Possible view.{Property(viewCall)} call; runtime scope and arguments require review.";
                     }
+                    if (node is AssignmentExpression dynamicAssignment && dynamicAssignment.Left is MemberExpression dynamicMember
+                        && dynamicMember.Object is MemberExpression dynamicGroup && dynamicGroup.Object is Identifier { Name: "view" }
+                        && dynamicGroup.Computed && Property(dynamicGroup) == "")
+                    {
+                        message = "Possible computed view group mutation; resolve the group, column and value before planning indexes.";
+                    }
+                    if (node is CallExpression { Callee: MemberExpression dynamicCall } && dynamicCall.Object is Identifier { Name: "view" }
+                        && dynamicCall.Computed && Property(dynamicCall) == "")
+                    {
+                        message = "Possible computed view method call; resolve the method and arguments before planning indexes.";
+                    }
                     if (node is ObjectProperty property && Name(property.Key) is "ColumnFilterHash" or "ColumnSorterHash")
                     {
                         message = property.Value is ObjectExpression obj
