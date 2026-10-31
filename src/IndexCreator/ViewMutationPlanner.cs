@@ -135,6 +135,25 @@ public static class ViewMutationPlanner
 
         foreach (var statement in root.ChildNodes)
         {
+            if (statement is IfStatement branch)
+            {
+                if (Constant(branch.Test, constants) is not BooleanLiteral condition
+                    || branch.Consequent is not BlockStatement thenBlock
+                    || branch.Alternate is not (null or BlockStatement))
+                {
+                    return null;
+                }
+                // 未選択側も検査し、varや関数宣言の巻き上げなどを推測しない。
+                var whenTrue = ResolveBlock(thenBlock, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1);
+                var whenFalse = branch.Alternate == null ? new List<Update>()
+                    : ResolveBlock(branch.Alternate, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1);
+                if (whenTrue == null || whenFalse == null)
+                {
+                    return null;
+                }
+                updates.AddRange(condition.Value ? whenTrue : whenFalse);
+                continue;
+            }
             if (statement is BlockStatement block)
             {
                 var nested = ResolveBlock(block, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1);
