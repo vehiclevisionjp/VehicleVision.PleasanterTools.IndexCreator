@@ -8,6 +8,13 @@ public sealed record ExtensionInspection(IReadOnlyList<Diagnostic> Diagnostics, 
 
 public static class ExtensionInventory
 {
+    public static string DescribeInputs(bool filesSpecified, bool tableSpecified, IReadOnlyList<AnalysisExtension> entries)
+    {
+        var files = filesSpecified ? $"read ({entries.Count(e => e.Source == "file")} entries)" : "not-provided";
+        var table = tableSpecified ? $"read ({entries.Count(e => e.Source == "table")} entries)" : "not-provided";
+        return $"Extension inputs: files={files}; table={table}. Read counts include disabled file entries; only applicable active entries affect analysis. Unprovided sources and runtime context are not covered.";
+    }
+
     public static IReadOnlyList<AnalysisExtension> ReadFiles(string parameterPath)
     {
         if (!DirectoryPresent(parameterPath))
@@ -115,8 +122,9 @@ public static class ExtensionInventory
                     continue;
                 }
                 uncertain.Add(site.SiteId);
-                var origin = $"Extension #{i + 1} ({extension.Source}, {extension.Type})";
-                notes.Add(new(site.SiteId, origin + ": possible applicability; runtime scope and ordering require review. Extension text and names are not logged."));
+                var source = extension.Source is "file" or "table" ? extension.Source : "other";
+                var origin = $"Extension #{i + 1} ({source}, {extension.Type})";
+                notes.Add(new(site.SiteId, origin + ": [extension:unresolved] possible applicability; runtime scope and ordering require review. Extension text and names are not logged."));
                 if (extension.Type == "ServerScript")
                 {
                     var isolated = site with { SiteSettings = JsonSerializer.SerializeToElement(new { ServerScripts = new[] { extension.Settings } }) };

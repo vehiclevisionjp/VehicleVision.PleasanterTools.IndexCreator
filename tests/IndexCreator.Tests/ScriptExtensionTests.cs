@@ -93,6 +93,7 @@ internal static class ScriptExtensionTests
 
     public static void Run(Action<bool, string> check, Action<Action, string> reject)
     {
+        ScriptDiagnosticTests.Run(check);
         var source = MutationSite();
         foreach (var db in Enum.GetValues<Dbms>())
         {

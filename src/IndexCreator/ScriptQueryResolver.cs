@@ -4,15 +4,16 @@ using Acornima.Ast;
 namespace VehicleVision.PleasanterTools.IndexCreator;
 
 public sealed record ScriptQuery(long TargetSiteId, JsonElement View);
+public sealed record ScriptQueryResolution(IReadOnlyList<ScriptQuery> Queries, string Status, string Reason, int StatementOrdinal);
 
 /// <summary>副作用のない先頭の宣言列だけを追跡する限定的な解析。</summary>
 public static class ScriptQueryResolver
 {
-    public static IReadOnlyList<ScriptQuery> Resolve(Node root)
+    public static IReadOnlyList<ScriptQuery> Resolve(Node root) => Inspect(root).Queries;
+
+    public static ScriptQueryResolution Inspect(Node root)
     {
-        var result = new List<ScriptQuery>();
         var variables = new Dictionary<string, object?>();
-        // ホイスティングや同名 API の定義を見つけた場合、実 API として確定しない。
         var pending = new Stack<Node>();
         pending.Push(root);
         while (pending.TryPop(out var node))
@@ -21,7 +22,7 @@ public static class ScriptQueryResolver
                 || node is VariableDeclarator { Id: Identifier id } && id.Name is "items" or "JSON"
                 || node is FunctionDeclaration { Id: Identifier function } && function.Name is "items" or "JSON")
             {
-                return result;
+                return new([], "unresolved", "scope-or-shadowing", 0);
             }
             foreach (var child in node.ChildNodes)
             {
@@ -29,50 +30,47 @@ public static class ScriptQueryResolver
             }
         }
         var statements = root.ChildNodes.ToArray();
-        // スクリプト全体を囲う try の先頭は必ず実行される。catch/finally の値は流入させない。
+        // 全体を囲うtryの先頭だけを解析する。後続やcatch/finallyは対象外。
         if (statements.Length == 1 && statements[0] is TryStatement wrapper)
         {
             statements = wrapper.Block.ChildNodes.ToArray();
         }
+        var ordinal = 0;
         foreach (var statement in statements)
         {
+            ordinal++;
             if (statement is ExpressionStatement { Expression: CallExpression standalone })
             {
-                if (Query(standalone, variables) is { } query)
-                {
-                    result.Add(query);
-                }
-                return result;
+                return Query(standalone, variables) is { } query
+                    ? new([query], "resolved", "first-query-only", ordinal)
+                    : new([], "unresolved", "unsupported-or-dynamic-call", ordinal);
             }
             if (statement is not VariableDeclaration declaration)
             {
-                break;
+                return new([], "unresolved", "unsupported-statement", ordinal);
             }
             foreach (var item in declaration.Declarations)
             {
                 if (item.Id is not Identifier name)
                 {
-                    return result;
+                    return new([], "unresolved", "scope-or-shadowing", ordinal);
                 }
                 if (item.Init is CallExpression call && Query(call, variables) is { } resolved)
                 {
-                    result.Add(resolved);
-                    // Get 内の副作用や後続の再代入を追跡しない。
-                    return result;
+                    return new([resolved], "resolved", "first-query-only", ordinal);
                 }
                 if (!Value(item.Init, variables, out var value))
                 {
-                    return result;
+                    return new([], "unresolved", "unresolved-value-or-call", ordinal);
                 }
-                // オブジェクトの別名を作らない。参照を共有すると後続の変更を追跡できない。
                 if (item.Init is Identifier && value is not (null or string or double or bool))
                 {
-                    return result;
+                    return new([], "unresolved", "reference-alias", ordinal);
                 }
                 variables[name.Name] = value;
             }
         }
-        return result;
+        return new([], "resolved-no-query", "declarations-only", ordinal);
     }
 
     private static ScriptQuery? Query(CallExpression call, Dictionary<string, object?> variables)

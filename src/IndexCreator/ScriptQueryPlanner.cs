@@ -17,7 +17,14 @@ public static class ScriptQueryPlanner
             }
             if (externalSites?.Contains(source.SiteId) == true || source.SiteSettings.Get("ServerScripts").Array().Any(s => !s.Get("Disabled").Bool() && s.Get("Shared").Bool()))
             {
-                diagnostics.Add(new(source.SiteId, "Script query candidates require review because extensions or shared scripts may affect execution."));
+                if (externalSites?.Contains(source.SiteId) == true)
+                {
+                    diagnostics.Add(new(source.SiteId, "[script-query:unresolved] extension-impact; no query candidate generated."));
+                }
+                if (source.SiteSettings.Get("ServerScripts").Array().Any(s => !s.Get("Disabled").Bool() && s.Get("Shared").Bool()))
+                {
+                    diagnostics.Add(new(source.SiteId, "[script-query:unresolved] shared-script; no query candidate generated."));
+                }
                 continue;
             }
             var ordinal = 0;
@@ -30,29 +37,32 @@ public static class ScriptQueryPlanner
                 }
                 if (script.Get("Body").Text().Contains("//Include:", StringComparison.Ordinal))
                 {
-                    diagnostics.Add(new(source.SiteId, $"Server script #{ordinal}: Include expansion requires review; no query candidate generated."));
+                    diagnostics.Add(new(source.SiteId, $"Server script #{ordinal}: [script-query:unresolved] include; no query candidate generated."));
                     continue;
                 }
-                IReadOnlyList<ScriptQuery> queries;
+                ScriptQueryResolution resolution;
                 try
                 {
-                    queries = ScriptQueryResolver.Resolve(new Parser(new ParserOptions { AllowReturnOutsideFunction = true }).ParseScript(script.Get("Body").Text()));
+                    resolution = ScriptQueryResolver.Inspect(new Parser(new ParserOptions { AllowReturnOutsideFunction = true }).ParseScript(script.Get("Body").Text()));
                 }
                 catch (ParseErrorException)
                 {
                     throw new UserError($"Site {source.SiteId}, server script #{ordinal}: JavaScript parsing failed.");
                 }
-                foreach (var query in queries)
+                var location = resolution.StatementOrdinal == 0 ? "whole-body scope check" : $"prefix statement #{resolution.StatementOrdinal}";
+                diagnostics.Add(new(source.SiteId, $"Server script #{ordinal}: [script-query:{resolution.Status}] {resolution.Reason}; {location}. Only the supported prefix through the first query is covered; later statements and catch/finally are not covered."));
+                foreach (var query in resolution.Queries)
                 {
                     if (!targets.TryGetValue(query.TargetSiteId, out var target))
                     {
-                        diagnostics.Add(new(source.SiteId, $"Server script #{ordinal}: target site {query.TargetSiteId} is unavailable; no candidate generated."));
+                        diagnostics.Add(new(source.SiteId, $"Server script #{ordinal}: [script-query:unresolved] target-unavailable; target site {query.TargetSiteId} is unavailable; no candidate generated."));
                         continue;
                     }
                     var plan = new Planner(dbms, minRecords, mysqlPrefix: mysqlPrefix).AnalyzeQuery(target, query.View);
                     indexes.AddRange(plan.Indexes);
                     diagnostics.AddRange(plan.Diagnostics);
-                    diagnostics.Add(new(source.SiteId, $"Server script #{ordinal}: target site {target.SiteId}, {plan.Indexes.Count} index candidates for review."));
+                    var status = plan.Indexes.Count == 0 ? "resolved-no-candidates" : "resolved";
+                    diagnostics.Add(new(source.SiteId, $"Server script #{ordinal}: [script-query:{status}] target site {target.SiteId}, {plan.Indexes.Count} index candidates for review."));
                 }
             }
         }
