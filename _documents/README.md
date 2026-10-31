@@ -31,4 +31,5 @@
 | [参照資料の記録](../_development/参照資料.md) | 一次情報と確認日 |
 | [検証記録](../_development/検証記録.md) | 実施した検証と未確認の範囲 |
 | [索引カバー分析](../_development/索引カバー分析.md) | 本体の保存ビュー条件と DB 構造の照合・追加候補・検証結果 |
+| [CalendarとGanttの索引分析](../_development/CalendarとGanttの索引分析.md) | 期間検索の本体SQL・候補化の境界・３DBの検証計画 |
 | [E2E 手順](../_development/E2E手順.md) | 本体の画面操作による検証の再現手順 |
