@@ -1,5 +1,5 @@
 VehicleVision.PleasanterTools.IndexCreator
-Copyright (C) 2026 PMC Co., Ltd. IT Solution Div.
+Copyright (C) PMC Co., Ltd. IT Solution Div.
 SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-PMC-Commercial
 Source: https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator
 
@@ -21,5 +21,5 @@ packages and System.* packages are MIT; locked versions are in packages.lock.jso
 Microsoft.Data.SqlClient.SNI.runtime 7.1.0 uses Microsoft Software License Terms,
 not MIT. Its unmodified Windows native libraries retain those separate terms.
 The redistribution conditions are reflected in LICENSING.md (exception section) and
-LICENSE-COMMERCIAL.md (conditions for recipients). Legal review is pending.
-Pleasanter reference submodule: AGPL v3, not included in distribution.
+LICENSE-COMMERCIAL.md (conditions for recipients).
+Pleasanter reference source (_reference/, fetched on demand and untracked): AGPL v3, not included in distribution.
