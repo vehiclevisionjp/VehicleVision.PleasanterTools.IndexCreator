@@ -310,6 +310,18 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
             ranges.Add(new("Status"));
         }
 
+        if (Positive("Delay"))
+        {
+            if (s.ReferenceType == "Issues")
+            {
+                ranges.Add(new("Status"));
+                Note(s, "Delay uses a Status range candidate; its time-dependent ProgressRate expression is not covered by ordinary indexes.");
+            }
+            else
+            {
+                Note(s, "Delay requires Issues progress and date columns; no delay index was generated.");
+            }
+        }
         var near = Positive("NearCompletionTime");
         var overdue = Positive("Overdue");
         if (near || overdue)
