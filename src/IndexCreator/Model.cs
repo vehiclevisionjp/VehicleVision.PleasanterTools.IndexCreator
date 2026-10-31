@@ -94,7 +94,7 @@ public static class Json
             throw new UserError("SiteSettings must be a JSON object.");
         }
 
-        foreach (var name in new[] { "Views", "Columns", "Links", "Summaries", "GridColumns", "FilterColumns", "RelatingColumns" })
+        foreach (var name in new[] { "Views", "Columns", "Links", "Summaries", "GridColumns", "FilterColumns", "RelatingColumns", "DashboardParts", "ServerScripts" })
         {
             var value = settings.Get(name);
             if (value.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Array))
@@ -140,6 +140,14 @@ public static class Json
         if (v.ValueKind != JsonValueKind.Object)
         {
             throw new UserError("A view must be a JSON object.");
+        }
+
+        foreach (var name in new[] { "DefaultMode", "CalendarFromTo" })
+        {
+            if (v.Get(name).ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.String))
+            {
+                throw new UserError("Calendar view metadata has an invalid shape. No changes were applied.");
+            }
         }
 
         foreach (var name in new[] { "ColumnFilterHash", "ColumnSorterHash", "ColumnFilterSearchTypes", "ColumnFilterExpressions" })
