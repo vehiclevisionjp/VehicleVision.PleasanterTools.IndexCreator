@@ -150,6 +150,22 @@ Check(!Plan(Dbms.PostgreSQL, """{"UseNegativeFilters":true,"Views":[{"Own":true,
 Check(Plan(Dbms.PostgreSQL, """{"Views":[{"Own":true,"ColumnFilterNegatives":["ViewFilters_Own"]}]}""").Indexes.Count == 2, "Inactive negative-filter setting does not negate Own");
 Check(Plan(Dbms.PostgreSQL, """{"Views":[{"Own":true,"ColumnSorterHash":{"NumA":"desc"}}]}""").Indexes.All(i => i.Keys.Count == 2), "Own equality survives unsupported sort without claiming sort coverage");
 Analysis IssuePlan(string settings) => new Planner(Dbms.PostgreSQL, 0).Analyze([SiteWith(settings) with { ReferenceType = "Issues" }]);
+foreach (var delayDb in Enum.GetValues<Dbms>())
+{
+    var delaySite = SiteWith("{}") with { ReferenceType = "Issues" };
+    Analysis DelayQuery(string view, Site? target = null) => new Planner(delayDb, 0).AnalyzeQuery(target ?? delaySite, Json.Parse(view));
+    var delay = DelayQuery("""{"Delay":true}""");
+    Check(delay.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Status"]), "Delay adds only Status range on " + delayDb);
+    Check(delay.Diagnostics.Any(d => d.Message.Contains("time-dependent ProgressRate expression")), "Delay residual expression is explicit on " + delayDb);
+    Check(DelayQuery("""{"Delay":true,"ColumnFilterHash":{"Manager":"1"},"ColumnSorterHash":{"CreatedTime":"desc"}}""").Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Manager", "Status"]), "Delay retains equality prefix and does not claim sorting on " + delayDb);
+    Check(DelayQuery("""{"Delay":true,"Own":true}""").Indexes.Count == 2, "Delay combines separate Own branches on " + delayDb);
+    Check(DelayQuery("""{"Delay":true,"Incomplete":true}""").Indexes.Count == 1, "Delay and Incomplete deduplicate Status on " + delayDb);
+    var negative = DelayQuery("""{"Delay":true,"ColumnFilterNegatives":["ViewFilters_Delay"]}""", delaySite with { SiteSettings = Json.Parse("""{"UseNegativeFilters":true}""") });
+    Check(negative.Indexes.Count == 0 && negative.Diagnostics.Any(d => d.Message.Contains("negative Delay")), "Negative Delay is not treated as positive range on " + delayDb);
+    Check(DelayQuery("""{"Delay":true,"ColumnFilterNegatives":["ViewFilters_Delay"]}""").Indexes.Count == 1, "Inactive negative option retains Delay on " + delayDb);
+    Check(DelayQuery("""{"Delay":true}""", delaySite with { ReferenceType = "Results" }).Indexes.Count == 0, "Delay does not invent Issues predicates on Results on " + delayDb);
+    Check(new Planner(delayDb, long.MaxValue).AnalyzeQuery(delaySite, Json.Parse("""{"Delay":true}""")).Indexes.Count == 0, "Delay respects workload threshold on " + delayDb);
+}
 var nearIndexes = IssuePlan("""{"Views":[{"NearCompletionTime":true}]}""").Indexes;
 Check(nearIndexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "CompletionTime"]), "Near deadline uses CompletionTime range");
 var overdueIndexes = IssuePlan("""{"Views":[{"Overdue":true}]}""").Indexes;
@@ -420,6 +436,15 @@ if (args.Contains("--integration"))
     }
     var sites = await database.ReadSites(default);
     await ScriptExtensionTests.RunDatabase(database, d, dbms, Check);
+    var delayLive = new Planner(dbms, 0).AnalyzeQuery(SiteWith("{}", 2) with { SiteId = 2, ReferenceType = "Issues" }, Json.Parse("""{"Delay":true}""")).Indexes;
+    Check(delayLive.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Status"]), "Live Delay candidate is the plain Status access path");
+    await database.ValidateColumns(delayLive, default);
+    await database.Apply(Reconciler.Plan(delayLive, await database.ReadIndexes(default), false), default);
+    Check(Reconciler.Plan(delayLive, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live Delay index roundtrips and is reused");
+    foreach (var delayIndex in delayLive)
+    {
+        await database.Execute(d.Drop(delayIndex.Table, delayIndex.Name));
+    }
     var completeLookupPlan = RecordIdLookupPlanner.Complete(new([], []), sites).Indexes;
     Check(Reconciler.Plan(completeLookupPlan, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live standard ID indexes cover table lookup candidates");
     // 架空の設定から得た候補を3DB共通の専用テストDBで検証する。製品のplan専用制約は変えない。
