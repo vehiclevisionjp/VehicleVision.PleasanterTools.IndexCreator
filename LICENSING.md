@@ -1,5 +1,9 @@
 # ライセンスについて（デュアルライセンス）
 
+<!-- license:begin release=released -->
+> 公開済みの版（v0.1.1〜v0.3.1）は、受け取った時点の AGPL-3.0-or-later のままです。
+<!-- license:end release -->
+
 対象ソフトウェアは **VehicleVision.PleasanterTools.IndexCreator**
 
 Copyright (C) PMC Co., Ltd. IT Solution Div.
@@ -11,7 +15,7 @@ Copyright (C) PMC Co., Ltd. IT Solution Div.
 | | ライセンス | 全文 | 想定する利用 |
 | --- | --- | --- | --- |
 | A | **GNU AGPL v3 以降**（AGPL-3.0-or-later） | [`LICENSE`](LICENSE) | オープンソースとして利用・改変・再配布する場合 |
-| B | **株式会社ピー・エム・シー ITソリューション事業部の商用ライセンス** | [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md) | 法人が、AGPL の義務を負わずに利用したい場合（個別契約） |
+| B | **株式会社ピー・エム・シー ITソリューション事業部の商用ライセンス** | [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md) | AGPL の義務を負わずに利用したい場合（個別契約） |
 
 SPDX 表記： `AGPL-3.0-or-later OR LicenseRef-PMC-Commercial`
 
@@ -26,15 +30,18 @@ SPDX 表記： `AGPL-3.0-or-later OR LicenseRef-PMC-Commercial`
   その利用者に対して改変版のソースコードを提供する義務**が生じます
 - 本ソフトウェアと結合した著作物を配布する場合、その全体を AGPL で提供する必要があります
 
+<!-- license:begin usage=console -->
 本ソフトウェアはコンソールアプリで、利用者が自分の環境で実行します。
-ただし、組織の内部での利用や受託での提供など、義務の有無が分かりにくい場面は確認してください。
+<!-- license:end usage -->
+
+組織の内部での利用や受託での提供など、義務の有無が分かりにくい場面は確認してください。
 
 ### B. 商用ライセンスを選ぶ場合
 
-**法人**が、AGPL の義務（ソースコード開示・コピーレフト）を負わずに利用できます。
+AGPL の義務（ソースコード開示・コピーレフト）を負わずに利用できます。
 条件は個別契約で定めます。次のような場合はこちらを検討してください。
 
-- 改変版のソースコードを公開したくない
+- 改変版のソースコードを公開したくない（ネットワーク経由で提供する場合を含む）
 - 自社の proprietary な製品・システムに組み込みたい
 - AGPL の義務範囲について社内の法務判断が難しい
 - 保守・サポート・SLA を契約に含めたい
@@ -49,11 +56,15 @@ SPDX 表記： `AGPL-3.0-or-later OR LicenseRef-PMC-Commercial`
 
 - 本体のソースコードを **複製・改変・リンク・プロジェクト参照していません**。Pleasanter のアセンブリも参照しません
 - Pleasanter の派生著作物ではありません
-- 本体が使う設定ファイルを読み、**本体と同じデータベースへ接続**してインデックスを管理します
-  （Pleasanter 本体のプログラムは呼び出しません）
+  <!-- license:begin connection=db-same -->
+- Pleasanter と**同じデータベースへ直接接続**します。Pleasanter 本体のプログラムは呼び出しません
+  <!-- license:end connection -->
+  <!-- license:begin reference=on -->
 - [`_reference/Implem.Pleasanter`](_reference/README.md) は**事実確認のための参照専用**で、
   ビルド対象にも配布物にも含めません
+  <!-- license:end reference -->
 
+本ソフトウェアは、Pleasanter 本体の AGPL の**汚染を受けておらず、受け入れるつもりもありません。**
 そのため、本ソフトウェアのライセンスは Pleasanter のライセンスに拘束されず、
 **著作権者である株式会社ピー・エム・シー ITソリューション事業部が自由に決定できます。
 これがデュアルライセンスを成立させている前提です。**
@@ -62,21 +73,33 @@ SPDX 表記： `AGPL-3.0-or-later OR LicenseRef-PMC-Commercial`
 > Pleasanter の著作権は当社にないため、**取り込んだ瞬間に B（商用ライセンス）を
 > 提供できなくなります。** デュアルの片方が壊れます。
 
-本ソフトウェアは、本体の挙動（CodeDefiner の引数の扱い、設定の読み込みなど）を参考に作っていますが、
-**本体のコードは一切流用していません**（開発者による確認。参考にした一次情報は
+<!-- license:begin pleasanter-note=free -->
+本ソフトウェアは、本体が使う設定ファイル（`App_Data/Parameters` の `Rds.json`・`Service.json`・`Env.json`）を**読み取るだけ**で、
+そこから得た接続情報で本体と同じデータベースへ接続し、インデックス（と選択肢・サイトの View）を管理します。
+
+本ソフトウェアは、本体と同じ結果になるよう、本体の挙動（CodeDefiner の引数の扱い、設定の読み込み、
+選択肢の連結の判定など）を参考にして実装しています。**挙動の互換のために参考にしたものであり、
+本体のコードは複製も流用もしていません**（開発者による確認。参考にした一次情報は
 [`_documents/アーキテクチャ方針.md`](_documents/アーキテクチャ方針.md)）。
+プロジェクト参照・名前空間の取り込みが無いことは、CI の `scripts/reference-isolation-check.sh` が検査します。
+<!-- license:end pleasanter-note -->
 
 ## 依存ソフトウェアについて
 
-本ソフトウェアが利用する OSS は **すべて寛容ライセンス（MIT / BSD 系 / Apache-2.0）** に
-限定します。一覧は [`NOTICE`](NOTICE) と [`ThirdPartyNotices.txt`](ThirdPartyNotices.txt) を参照してください。
+本ソフトウェアが利用する OSS は **寛容ライセンス（MIT / BSD 系 / Apache-2.0）** に
+限定します。一覧は [`NOTICE`](NOTICE) を参照してください。推移的依存と実際の版は `packages.lock.json` にあります。
+
+<!-- license:begin deps-note=free -->
+第三者のライセンス全文は [`ThirdPartyNotices.txt`](ThirdPartyNotices.txt) にあります。
+<!-- license:end deps-note -->
 
 これは意図的な制約です。**コピーレフト系（GPL / AGPL / SSPL 等）の依存が 1 つでも入ると、
 商用ライセンスでの提供ができなくなります。** 依存を追加する際は必ずライセンスを確認してください。
 
+<!-- license:begin sni=on -->
 ### 例外: Microsoft.Data.SqlClient.SNI.runtime
 
-**唯一の例外**として、SQL Server に接続する Windows 向けの配置物には、
+**例外として**、SQL Server に接続する Windows 向けの配置物には、
 `Microsoft.Data.SqlClient.SNI.runtime`（ネイティブのライブラリ。Microsoft Software License Terms
 「MICROSOFT.DATA.SQLCLIENT.SNI LIBRARY」）が含まれます。MIT・BSD・Apache-2.0 ではない
 Microsoft 独自の許諾です。**選択肢 A・B のどちらでも**、この部品には次の条件が付きます
@@ -93,8 +116,12 @@ Microsoft 独自の許諾です。**選択肢 A・B のどちらでも**、こ�
   本ソフトウェアの AGPL は当社が著作権を持つ部分に及び、この部品はバイナリのまま同梱する別の著作物です
 
 **これらは Questionnaire で決めた取り扱い（2026-10-20）と同じ整理です。
-本リポジトリでの許容は、法務の確認で確定します。上の整理は法的な助言ではありません。**
+上の整理は法的な助言ではありません。**
 条件の正本は、パッケージ内の `LICENSE.txt` です。
+<!-- license:end sni -->
+
+<!-- license:begin core=off -->
+<!-- license:end core -->
 
 ## 貢献を受け取るとき
 

@@ -104,7 +104,7 @@ Results・Issues・Wikis の保存ビューの通常のフィルタ・関数を�
 | | ライセンス | 想定する利用 |
 | --- | --- | --- |
 | A | [GNU AGPL v3 以降](LICENSE) | オープンソースとして利用・改変・再配布する場合 |
-| B | [株式会社ピー・エム・シー ITソリューション事業部の商用ライセンス](LICENSE-COMMERCIAL.md) | 法人が AGPL の義務を負わずに利用したい場合（個別契約） |
+| B | [株式会社ピー・エム・シー ITソリューション事業部の商用ライセンス](LICENSE-COMMERCIAL.md) | AGPL の義務を負わずに利用したい場合（個別契約） |
 
 依存の条件は [NOTICE](NOTICE) と [第三者ライセンス](ThirdPartyNotices.txt) を参照してください。
 
