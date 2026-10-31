@@ -21,6 +21,7 @@ Pleasanter 本体は AI の事実確認専用の非追跡ソース。取り込�
 `develop` が開発基準、`master` はリリース用。
 初期配置後は Issue → develop から作業ブランチ → Release ビルドと影響するテスト → push →
 Draft PR（WIP:、Closes #N）。利用者の DB を変更する機能のマージはレビューを待つ。
+並行作業は `.worktrees/` 内の `git worktree`（`.gitignore` 済み）で行う。
 
 正式な要件は `_documents/` に置く。共通規約はこのファイルが単一の参照元。
 AGENTS.md は `bash scripts/sync-agents.sh` で再生成し、`--check` で同期を確認する。
