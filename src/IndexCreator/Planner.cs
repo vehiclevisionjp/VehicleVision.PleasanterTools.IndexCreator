@@ -166,6 +166,11 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
             foreach (var v in s.SiteSettings.Get("Views").Array())
             {
                 AnalyzeView(s, v, links);
+                var calendar = CalendarColumn(s, v, links);
+                if (calendar != null)
+                {
+                    AnalyzeView(s, v, links, calendarColumn: calendar);
+                }
             }
 
             if (includeFilterColumns)
@@ -261,7 +266,24 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
             }
         }
     }
-    private void AnalyzeView(Site s, JsonElement view, HashSet<string> links, bool choiceLookup = false)
+    private string? CalendarColumn(Site s, JsonElement view, HashSet<string> links)
+    {
+        if (view.Get("DefaultMode").Text() != "Calendar")
+        {
+            return null;
+        }
+        var name = view.Get("CalendarFromTo").Text();
+        if (s.ReferenceType is not ("Results" or "Issues") || s.SiteSettings.Get("DashboardParts").Array().Any()
+            || s.SiteSettings.Get("ServerScripts").Array().Any(x => !x.Get("Disabled").Bool())
+            || ColumnKind(name) != Kind.Date || links.Contains(name))
+        {
+            Note(s, "Calendar period planning requires an explicit single physical date column without dashboard or active server scripts; no calendar candidate generated.");
+            return null;
+        }
+        Note(s, "Calendar single-date range candidate generated; interval calendars and Gantt expressions are not covered.");
+        return name;
+    }
+    private void AnalyzeView(Site s, JsonElement view, HashSet<string> links, bool choiceLookup = false, string? calendarColumn = null)
     {
         if (view.Get("ColumnFilterExpressions").Props().Any())
         {
@@ -270,6 +292,10 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
 
         var equality = new List<Key>();
         var ranges = new List<Key>();
+        if (calendarColumn != null)
+        {
+            ranges.Add(KeyFor(calendarColumn));
+        }
         var negatives = view.Get("ColumnFilterNegatives").Array().Select(x => x.Text()).ToHashSet();
         foreach (var p in Filters(view.Get("ColumnFilterHash")))
         {

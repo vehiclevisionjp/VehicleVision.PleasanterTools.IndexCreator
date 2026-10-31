@@ -21,6 +21,7 @@ void Reject(Action action, string name)
 }
 Site SiteWith(string settings, long count = 20000, string table = "Results") => new(1, table, Json.Parse(settings), count);
 ScriptExtensionTests.Run(Check, Reject);
+CalendarTests.Run(Check);
 Analysis Plan(Dbms db, string settings) => new Planner(db).Analyze([SiteWith(settings)]);
 IReadOnlyList<Diagnostic> ScriptNotes(string body, bool disabled = false) => ServerScriptDiagnostics.Analyze([SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = body, Disabled = disabled } } }))]);
 Check(ScriptNotes("// items.Get(1)\nconst text='view.Filters.ClassA=1';").Count == 0, "Script comments and strings are not calls");
@@ -437,6 +438,19 @@ if (args.Contains("--integration"))
     var sites = await database.ReadSites(default);
     await ScriptExtensionTests.RunDatabase(database, d, dbms, Check);
     var delayLive = new Planner(dbms, 0).AnalyzeQuery(SiteWith("{}", 2) with { SiteId = 2, ReferenceType = "Issues" }, Json.Parse("""{"Delay":true}""")).Indexes;
+    foreach (var calendarTable in new[] { "Results", "Issues" })
+    {
+        var calendarSite = SiteWith("""{"Views":[{"DefaultMode":"Calendar","CalendarFromTo":"DateA"}]}""", 2) with { SiteId = 2, ReferenceType = calendarTable };
+        var calendarIndexes = new Planner(dbms, 0).Analyze([calendarSite]).Indexes.Where(i => i.Keys.Last().Column == "DateA").ToArray();
+        Check(calendarIndexes.Length == 1, "Live Calendar candidate on " + calendarTable);
+        await database.ValidateColumns(calendarIndexes, default);
+        await database.Apply(Reconciler.Plan(calendarIndexes, await database.ReadIndexes(default), false), default);
+        Check(Reconciler.Plan(calendarIndexes, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Live Calendar index roundtrip on " + calendarTable);
+        foreach (var calendarIndex in calendarIndexes)
+        {
+            await database.Execute(d.Drop(calendarIndex.Table, calendarIndex.Name));
+        }
+    }
     Check(delayLive.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Status"]), "Live Delay candidate is the plain Status access path");
     await database.ValidateColumns(delayLive, default);
     await database.Apply(Reconciler.Plan(delayLive, await database.ReadIndexes(default), false), default);
