@@ -22,7 +22,7 @@ internal static class ScriptExtensionTests
             await database.Execute($"INSERT INTO {table} VALUES (1,'fixture','ServerScript',{Literal(settings)},{Literal(body)},{enabled}), (2,'sql','Sql','{{\"OnSelectingWhere\":true}}','PRIVATE_SQL',{enabled}), (3,'disabled','ServerScript','invalid','invalid',{disabled}), (4,'style','Style','invalid','invalid',{enabled})");
             var entries = await database.ReadAnalysisExtensions(default);
             check(entries.Count == 2 && entries.Single(e => e.Type == "ServerScript").Settings.Get("Body").Text() == body, "Live table selects active analysis types and overrides Body");
-            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "{ const status='100', direction=1, negative=false, column='Status', sort='UpdatedTime', f='Filters', s='Sorters', clear='ClearFilters', negate='FilterNegative'; { view[clear](); view[f][column]=status; view[negate](column,negative); view[s][sort]=direction; } }");
+            var site = OrderedSite("view.Filters.Status='100,200'; view.FilterNegative('Status');", "{ const status='100', direction=1, negative=false, column='Status', sort='UpdatedTime', f='Filters', s='Sorters', clear='ClearFilters', negate='FilterNegative'; const enabled=true; if(enabled) { view[clear](); view[f][column]=status; view[negate](column,negative); view[s][sort]=direction; } else { view[f][column]='200'; } }");
             var inspection = ExtensionInventory.Inspect([site], entries);
             check(ViewMutationPlanner.Analyze([site], dbms, externalSites: inspection.UncertainSites).Indexes.Count == 0, "Live extensions block unproven mutation inference");
             check(inspection.Diagnostics.All(n => !n.Message.Contains("PRIVATE_SQL")), "Live SQL body not disclosed");
@@ -96,6 +96,20 @@ internal static class ScriptExtensionTests
         var source = MutationSite();
         foreach (var db in Enum.GetValues<Dbms>())
         {
+            foreach (var enabled in new[] { "true", "false" })
+            {
+                var branchBody = "const enabled=" + enabled + "; if(enabled) { const status='100'; view.Filters.Status=status; view.Sorters.UpdatedTime=1; } else { const status='200'; view.Filters.Status=status; view.Sorters.UpdatedTime=0; }";
+                var branchPlan = ViewMutationPlanner.Analyze([MutationSite(branchBody)], db);
+                var chosenPlan = ViewMutationPlanner.Analyze([MutationSite(enabled == "true" ? "view.Filters.Status='100'; view.Sorters.UpdatedTime=1;" : "view.Filters.Status='200'; view.Sorters.UpdatedTime=0;")], db);
+                check(branchPlan.Indexes.Count > 0 && branchPlan.Indexes.Select(i => i.Signature).SequenceEqual(chosenPlan.Indexes.Select(i => i.Signature)), "Fixed Boolean branch matches selected mutations on " + db);
+            }
+            var nestedBranch = ViewMutationPlanner.Analyze([MutationSite("const enabled=true; if(enabled) { if(false) { view.ClearFilters(); } else { view.Filters.Status='100'; } } view.Sorters.UpdatedTime=1;")], db);
+            var nestedFlat = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=1;")], db);
+            check(nestedBranch.Indexes.Count > 0 && nestedBranch.Indexes.Select(i => i.Signature).SequenceEqual(nestedFlat.Indexes.Select(i => i.Signature)), "Unselected clear has no effect and nested branch preserves order on " + db);
+            var falseBranch = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; if(false) { view.FilterNegative('Status'); }")], db);
+            check(falseBranch.Indexes.Any(i => i.Keys.Any(k => k.Column == "Status")), "False branch without else does not apply negation on " + db);
+            var trueBranch = ViewMutationPlanner.Analyze([MutationSite("if(true) { view.ClearFilters(); } view.Filters.Status='100';")], db);
+            check(trueBranch.Indexes.Count > 0 && trueBranch.Indexes.All(i => i.Keys.All(k => k.Column != "Manager")), "Selected clear affects later filters on " + db);
             var blockBody = "const status='100'; { const column='Status'; { view.Filters[column]=status; } } { const column='UpdatedTime'; view.Sorters[column]=1; }";
             var blockPlan = ViewMutationPlanner.Analyze([MutationSite(blockBody)], db);
             var flatPlan = ViewMutationPlanner.Analyze([MutationSite("view.Filters.Status='100'; view.Sorters.UpdatedTime=1;")], db);
@@ -290,6 +304,25 @@ internal static class ScriptExtensionTests
         })
         {
             check(ViewMutationPlanner.Analyze([MutationSite("view.Filters.Manager='1';" + unsupportedBlock)], Dbms.SQLServer).Indexes.Count == 0, "Unsupported block or scope discards all mutation candidates");
+        }
+        foreach (var unsupportedBranch in new[] {
+            "if(context.Id) { view.Filters.Status='100'; }",
+            "if(1) { view.Filters.Status='100'; }",
+            "if('true') { view.Filters.Status='100'; }",
+            "const enabled=true; if(!enabled) { view.Filters.Status='100'; }",
+            "if(true) { view.Filters.Status='100'; } else { unknown(); }",
+            "if(false) { var view=other; } else { view.Filters.Status='100'; }",
+            "if(true) { view.Filters.Status='100'; } else { function view() {} }",
+            "if(true) { const enabled=true; } if(enabled) { view.Filters.Status='100'; }",
+            "const enabled=true; if(enabled) { const enabled=false; view.Filters.Status='100'; }",
+            "if(enabled) { view.Filters.Status='100'; } const enabled=true;",
+            "if(true) { view.Filters.Status='100'; } else if(false) { view.ClearFilters(); }",
+            "if(true) view.Filters.Status='100';",
+            "if(false) { view.Filters.Status='100'; } else view.ClearFilters();",
+            string.Concat(Enumerable.Repeat("if(true) {",33)) + "view.Filters.Status='100';" + new string('}',33)
+        })
+        {
+            check(ViewMutationPlanner.Analyze([MutationSite("view.Filters.Manager='1';" + unsupportedBranch)], Dbms.SQLServer).Indexes.Count == 0, "Unsupported or unsafe branch discards whole inference");
         }
         var privateConstant = ViewMutationPlanner.Analyze([MutationSite("const value='PRIVATE_CONSTANT_VALUE'; view.Filters.ClassA=value;")], Dbms.SQLServer);
         check(privateConstant.Diagnostics.All(n => !n.Message.Contains("PRIVATE_CONSTANT_VALUE")), "Constant values are not disclosed in diagnostics");
