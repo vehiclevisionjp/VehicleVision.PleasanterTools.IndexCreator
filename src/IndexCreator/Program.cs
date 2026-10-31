@@ -111,7 +111,7 @@ public static class Program
                 analysis = RecordIdLookupPlanner.Complete(new(
                     analysis.Indexes.Concat(scripts.Indexes).Concat(mutations.Indexes).ToArray(),
                     analysis.Diagnostics.Concat(scripts.Diagnostics).Concat(mutations.Diagnostics).Concat(inspection.Diagnostics).ToArray()), sites);
-                RuntimeLog.WriteLine($"Extension inputs: files={(options.ExtensionPath != null)}, table={options.ExtensionsTable}; entries={extensions.Count}. Unprovided sources and runtime context are not covered.");
+                RuntimeLog.WriteLine(ExtensionInventory.DescribeInputs(options.ExtensionPath != null, options.ExtensionsTable, extensions));
             }
             if (database != null)
             {

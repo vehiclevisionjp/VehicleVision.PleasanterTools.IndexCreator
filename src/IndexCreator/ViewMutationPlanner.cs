@@ -25,22 +25,30 @@ public static class ViewMutationPlanner
             {
                 continue;
             }
-            // サイト配列の順序は保持する。共有・Include・実行ラッパーの効果は推測しない。
-            if (active.Any(s => s.Get("Shared").Bool() || s.Get("WhenloadingSiteSettings").Bool())
-                || scripts.Length > 1 && scripts.Any(s => s.Get("Functionalize").Bool() || s.Get("TryCatch").Bool())
-                || scripts.Any(s => s.Get("Body").Text().Contains("//Include:", StringComparison.Ordinal))
-                || externalSites?.Contains(site.SiteId) == true)
+            var blockers = new List<string>();
+            if (active.Any(s => s.Get("Shared").Bool())) { blockers.Add("shared-script"); }
+            if (active.Any(s => s.Get("WhenloadingSiteSettings").Bool())) { blockers.Add("settings-loading"); }
+            if (scripts.Length > 1 && scripts.Any(s => s.Get("Functionalize").Bool() || s.Get("TryCatch").Bool())) { blockers.Add("execution-wrapper"); }
+            if (scripts.Any(s => s.Get("Body").Text().Contains("//Include:", StringComparison.Ordinal))) { blockers.Add("include"); }
+            if (externalSites?.Contains(site.SiteId) == true) { blockers.Add("extension-impact"); }
+            if (blockers.Count > 0)
             {
-                notes.Add(new(site.SiteId, "View mutations require review: wrappers, shared/include code, settings-loading scripts or extensions may affect execution."));
+                notes.Add(new(site.SiteId, $"[script-view:unresolved] {string.Join(", ", blockers)}; no mutation candidate generated."));
                 continue;
             }
-            // 改行で連結してから解析し、セミコロン省略によるスクリプト境界の作用も検査する。
-            var updates = Resolve(string.Join("\n", scripts.Select(s => s.Get("Body").Text())));
-            if (updates == null || updates.Count == 0)
+            // 連結後の文番号を使い、スクリプト境界の作用を変えず本文や任意の識別子を出力しない。
+            var updates = Resolve(string.Join("\n", scripts.Select(s => s.Get("Body").Text())), out var failure);
+            if (updates == null)
             {
-                notes.Add(new(site.SiteId, "View mutation body contains unresolved declarations, assignments or calls; no mutation candidate generated."));
+                notes.Add(new(site.SiteId, $"[script-view:unresolved] {failure}; no mutation candidate generated."));
                 continue;
             }
+            if (updates.Count == 0)
+            {
+                notes.Add(new(site.SiteId, "[script-view:resolved-no-mutations] No View changes in the supported body."));
+                continue;
+            }
+            var candidateStart = indexes.Count;
             foreach (var baseline in new[] { Json.Parse("{}") }.Concat(site.SiteSettings.Get("Views").Array()))
             {
                 Json.ValidateView(baseline);
@@ -105,13 +113,15 @@ public static class ViewMutationPlanner
                 indexes.AddRange(plan.Indexes);
                 notes.AddRange(plan.Diagnostics);
             }
-            notes.Add(new(site.SiteId, "Resolved View mutations were applied to the empty baseline and saved Views for review; runtime/session conditions are not reproduced."));
+            var candidateCount = indexes.Skip(candidateStart).DistinctBy(i => i.Signature).Count();
+            var status = candidateCount == 0 ? "resolved-no-candidates" : "resolved";
+            notes.Add(new(site.SiteId, $"[script-view:{status}] {candidateCount} candidates from the empty baseline and saved Views; runtime/session conditions are not reproduced."));
         }
         return new(indexes.DistinctBy(i => i.Signature).ToArray(), notes.Distinct().ToArray());
     }
 
     private sealed record Update(string Group, string Column, string Value);
-    private static List<Update>? Resolve(string source)
+    private static List<Update>? Resolve(string source, out string? failure)
     {
         Node root;
         try
@@ -122,33 +132,38 @@ public static class ViewMutationPlanner
         {
             throw new UserError("View mutation JavaScript parsing failed.");
         }
-        return ResolveBlock(root, new Dictionary<string, Node>(StringComparer.Ordinal), 0);
+        return ResolveBlock(root, new Dictionary<string, Node>(StringComparer.Ordinal), 0, "", out failure);
     }
 
-    private static List<Update>? ResolveBlock(Node root, Dictionary<string, Node> constants, int depth)
+    private static List<Update>? ResolveBlock(Node root, Dictionary<string, Node> constants, int depth, string parentPath, out string? failure)
     {
+        failure = null;
         if (depth > 32)
         {
-            return null;
+            return Unresolved("depth-limit", parentPath, out failure);
         }
         var updates = new List<Update>();
 
+        var ordinal = 0;
         foreach (var statement in root.ChildNodes)
         {
+            var path = parentPath + (++ordinal).ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (statement is IfStatement branch)
             {
                 if (Constant(branch.Test, constants) is not BooleanLiteral condition
                     || branch.Consequent is not BlockStatement thenBlock
                     || branch.Alternate is not (null or BlockStatement))
                 {
-                    return null;
+                    return Unresolved("unresolved-condition-or-branch-shape", path, out failure);
                 }
                 // 未選択側も検査し、varや関数宣言の巻き上げなどを推測しない。
-                var whenTrue = ResolveBlock(thenBlock, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1);
+                var whenTrue = ResolveBlock(thenBlock, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1, path + ".then.", out var thenFailure);
+                string? elseFailure = null;
                 var whenFalse = branch.Alternate == null ? new List<Update>()
-                    : ResolveBlock(branch.Alternate, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1);
+                    : ResolveBlock(branch.Alternate, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1, path + ".else.", out elseFailure);
                 if (whenTrue == null || whenFalse == null)
                 {
+                    failure = thenFailure ?? elseFailure;
                     return null;
                 }
                 updates.AddRange(condition.Value ? whenTrue : whenFalse);
@@ -156,7 +171,7 @@ public static class ViewMutationPlanner
             }
             if (statement is BlockStatement block)
             {
-                var nested = ResolveBlock(block, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1);
+                var nested = ResolveBlock(block, new Dictionary<string, Node>(constants, StringComparer.Ordinal), depth + 1, path + ".", out failure);
                 if (nested == null)
                 {
                     return null;
@@ -168,16 +183,19 @@ public static class ViewMutationPlanner
             {
                 if (declaration.Kind != VariableDeclarationKind.Const)
                 {
-                    return null;
+                    return Unresolved("mutable-declaration", path, out failure);
                 }
                 foreach (var item in declaration.Declarations)
                 {
-                    if (item.Id is not Identifier name || name.Name == "view"
-                        || Constant(item.Init, constants) is not { } literal
-                        || !constants.TryAdd(name.Name, literal))
+                    if (item.Id is not Identifier name || name.Name == "view" || constants.ContainsKey(name.Name))
                     {
-                        return null;
+                        return Unresolved("scope-or-shadowing", path, out failure);
                     }
+                    if (Constant(item.Init, constants) is not { } literal)
+                    {
+                        return Unresolved("unresolved-constant", path, out failure);
+                    }
+                    constants.Add(name.Name, literal);
                 }
                 continue;
             }
@@ -187,7 +205,7 @@ public static class ViewMutationPlanner
             {
                 if (clear.Arguments.Count != 0)
                 {
-                    return null;
+                    return Unresolved("unsupported-call-arguments", path, out failure);
                 }
                 updates.Add(new("ClearFilters", "", ""));
                 continue;
@@ -199,7 +217,7 @@ public static class ViewMutationPlanner
                 if (call.Arguments.Count is not (1 or 2) || Constant(call.Arguments[0], constants) is not StringLiteral name
                     || !SupportedColumn(name.Value) || call.Arguments.Count == 2 && Constant(call.Arguments[1], constants) is not BooleanLiteral)
                 {
-                    return null;
+                    return Unresolved("unsupported-call-arguments", path, out failure);
                 }
                 var negative = call.Arguments.Count == 1 || ((BooleanLiteral)Constant(call.Arguments[1], constants)!).Value;
                 updates.Add(new("Negatives", name.Value, negative ? "true" : "false"));
@@ -211,7 +229,7 @@ public static class ViewMutationPlanner
                 || member.Object is not MemberExpression group || group.Object is not Identifier { Name: "view" }
                 || Property(group, constants) is not ("Filters" or "Sorters" or "SearchTypes"))
             {
-                return null;
+                return Unresolved("unsupported-statement-or-operation", path, out failure);
             }
             var value = Constant(assignment.Right, constants) switch
             {
@@ -221,12 +239,12 @@ public static class ViewMutationPlanner
             };
             if (value == null)
             {
-                return null;
+                return Unresolved("unresolved-value", path, out failure);
             }
             var column = Property(member, constants);
             if (!SupportedColumn(column))
             {
-                return null;
+                return Unresolved("unsupported-or-dynamic-column", path, out failure);
             }
             if (Property(group, constants) == "Sorters")
             {
@@ -234,17 +252,23 @@ public static class ViewMutationPlanner
             }
             if (Property(group, constants) == "Sorters" && value is not ("asc" or "desc"))
             {
-                return null;
+                return Unresolved("unsupported-sorter", path, out failure);
             }
             if (Property(group, constants) == "SearchTypes" && value is not
                 ("PartialMatch" or "ExactMatch" or "ForwardMatch" or "PartialMatchMultiple" or "ExactMatchMultiple" or "ForwardMatchMultiple" or "1" or "2" or "3" or "11" or "12" or "13"))
             {
-                return null;
+                return Unresolved("unsupported-search-type", path, out failure);
             }
             updates.Add(new(Property(group, constants), column, value));
         }
         return updates;
     }
+    private static List<Update>? Unresolved(string reason, string path, out string? failure)
+    {
+        failure = $"{reason}; combined statement #{path}";
+        return null;
+    }
+
     // プリミティブのconstだけを追跡し、式評価や参照型の別名は扱わない。
     private static Node? Constant(Node? node, IReadOnlyDictionary<string, Node> constants) => node switch
     {
