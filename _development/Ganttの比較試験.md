@@ -1,0 +1,19 @@
+# Ganttの比較試験
+
+Issue #174 の第一段階。Ganttの開始CASEと終了日付補正式を含む期間重複ORを、独自の架空表で比較する。製品は保存ViewのDefaultModeがGanttの場合、専用候補を生成できていないことを診断する。通常Viewフィルターの候補とGantt期間式のカバーは別に扱う。
+
+## データと比較
+
+４千件・３サイトのStartTime、CompletionTime、CreatedTimeを持つ架空表を作る。開始と終了に独立にNULLを含め、期間包含・端点・期間外を生成する。標準段階のキーはSiteId・RecordId、比較候補はSiteId・StartTimeとSiteId・CompletionTimeの２本。本体Issuesの全列・標準索引・物理配置を再現したものではない。
+
+開始式は、参照で確認した単純CASEのNULL比較の意味を維持して独自に組み立てる。NULLのStartTimeをCreatedTimeへ補うCOALESCE相当の式には変更しない。終了の日付補正はSQL ServerのDATEADD、PostgreSQLのinterval、MySQLのDATE_ADDで0日と-1日を試す。
+
+固定の期間に対する３分岐のORを実行し、前後とも独立したC#のNULL比較・日付演算で求めた期待値と照合する。ウォームアップ後５回のクライアント時間と計画を保存する。SQL ServerはSTATISTICS XMLによる実行時計画、PostgreSQLはEXPLAIN ANALYZE BUFFERS、MySQLはEXPLAIN ANALYZEを使う。時間には通信と結果読み取りを含む。
+
+## 出力と制約
+
+テスト実行ファイルのディレクトリへ`gantt-workload-<DBMS>.json`を出力する。CI成功時には管理系比較と同じArtifactに保存する。データは架空のみで、接続情報は含めない。
+
+固定実行順・小さい架空表での時間差や、索引が使用されたことだけで採用とはしない。一般的なEditorFormatの全日数補正、View条件・権限との合成、更新負荷・容量、実際の本体UIまでの検証は残る。診断の追加は、不採用の性能評価をすべて完了したという意味ではない。Issue #174はこの変更だけでは閉じない。
+
+本体の事実確認は[CalendarとGanttの索引分析](CalendarとGanttの索引分析.md)に記録したコミット`664c833b144d9da9b6bb58e60f7e48eb01141e58`に基づく。本体ソースのコピー・依存追加は行わない。

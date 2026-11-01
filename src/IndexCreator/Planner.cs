@@ -165,6 +165,10 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
 
             foreach (var v in s.SiteSettings.Get("Views").Array())
             {
+                if (v.Get("DefaultMode").Text() == "Gantt")
+                {
+                    Note(s, "Gantt period CASE and completion-date expressions require full overlap-plan review; no Gantt-specific index candidate generated.");
+                }
                 AnalyzeView(s, v, links);
                 foreach (var calendar in CalendarColumns(s, v, links))
                 {

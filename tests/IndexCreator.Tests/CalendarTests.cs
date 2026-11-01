@@ -11,6 +11,7 @@ internal static class CalendarTests
                 Site Make(string view, string extra = "") => new(42, table, Json.Parse("{\"Views\":[" + view + "]" + extra + "}"), 20000);
                 const string view = """{"DefaultMode":"Calendar","CalendarFromTo":"DateA","ColumnFilterHash":{"Manager":"1"}}""";
                 var site = Make(view);
+                check(new Planner(db).Analyze([Make("""{"DefaultMode":"Gantt"}""")]).Diagnostics.Any(d => d.Message.Contains("no Gantt-specific")), "Gantt uncovered expression is diagnosed on " + db);
                 var intervalSite = Make("""{"DefaultMode":"Calendar","CalendarFromTo":"DateA-DateB","ColumnFilterHash":{"Manager":"1"}}""");
                 var intervals = new Planner(db, includePeriodCalendars: true).Analyze([intervalSite]);
                 check(intervals.Indexes.Count(i => i.Keys.Last().Column is "DateA" or "DateB") == 2, "Interval review generates separate branch keys on " + db);
