@@ -22,6 +22,7 @@ void Reject(Action action, string name)
 Site SiteWith(string settings, long count = 20000, string table = "Results") => new(1, table, Json.Parse(settings), count);
 ScriptExtensionTests.Run(Check, Reject);
 CalendarTests.Run(Check);
+DashboardCalendarTests.Run(Check, Reject);
 Check(Options.Parse(["plan", "/include-period-calendars"]).IncludePeriodCalendars, "Interval planning is explicit");
 Reject(() => Options.Parse(["_rds", "/include-period-calendars"]), "Interval review cannot auto-apply");
 Reject(() => Options.Parse(["plan", "/include-period-calendars", "/prune"]), "Interval review cannot prune");
@@ -462,6 +463,21 @@ if (args.Contains("--integration"))
     Check(Reconciler.Plan([SiteDeltaPlanner.Candidate], deltaCatalog, false).Single().Kind == ChangeKind.Keep, "Shared delta roundtrip on " + dbms);
     Check(!Reconciler.Plan([], SiteDeltaPlanner.Scope(deltaCatalog, false), true).Any(c => c.Spec.Table == "Sites"), "Ordinary prune excludes delta on " + dbms);
     await database.Execute(d.Drop("Sites", SiteDeltaPlanner.Candidate.Name));
+    var dashboardJson = """{"DashboardParts":[{"Type":4,"CalendarSites":"1","CalendarFromTo":"DateA","View":{}}]}""";
+    await database.Execute($"INSERT INTO {d.Table("Sites")} ({d.Quote("SiteId")},{d.Quote("ReferenceType")},{d.Quote("SiteSettings")},{d.Quote("Title")}) VALUES (900,'Dashboards','{dashboardJson}','Synthetic dashboard')");
+    var dashboardInputs = await database.ReadDashboardSites(default);
+    Check(dashboardInputs.Single().SiteId == 900, "Dashboard inventory reads dedicated source on " + dbms);
+    var dashboardIndexes = DashboardCalendarPlanner.Analyze(dashboardInputs, [SiteWith("{}", 2)], dbms, 0).Indexes;
+    Check(dashboardIndexes.Count == 1 && dashboardIndexes[0].Table == "Results", "Dashboard physical target is Results on " + dbms);
+    await database.ValidateColumns(dashboardIndexes, default);
+    var dashboardChanges = Reconciler.Plan(dashboardIndexes, await database.ReadIndexes(default), false);
+    await database.Apply(dashboardChanges, default);
+    Check(Reconciler.Plan(dashboardIndexes, await database.ReadIndexes(default), false).All(c => c.Kind == ChangeKind.Keep), "Dashboard physical candidate roundtrips on " + dbms);
+    foreach (var change in dashboardChanges.Where(c => c.Kind == ChangeKind.Create))
+    {
+        await database.Execute(d.Drop(change.Spec.Table, change.Name));
+    }
+    await database.Execute($"DELETE FROM {d.Table("Sites")} WHERE {d.Quote("SiteId")}=900");
     await PeriodCalendarTests.Run(dbms, cs, database, d, Check);
     await using (var second = new Database(configuration))
     {

@@ -38,4 +38,5 @@
 | [拡張サーバースクリプトの解析境界](../_development/拡張サーバースクリプトの解析境界.md) | 入力元・適用条件・順序・共有状態の設計境界 |
 | [CalendarとGanttの索引分析](../_development/CalendarとGanttの索引分析.md) | 期間検索の本体SQL・候補化の境界・３DBの検証計画 |
 | [Ganttの比較試験](../_development/Ganttの比較試験.md) | NULL・日付補正・期間重複ORと通常日付索引の比較 |
+| [Dashboard Calendarの解析境界](../_development/DashboardCalendarの解析境界.md) | 単一対象の保存部品・未解析の実行文脈・検証範囲 |
 | [E2E 手順](../_development/E2E手順.md) | 本体の画面操作による検証の再現手順 |

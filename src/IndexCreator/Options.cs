@@ -7,9 +7,10 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
 {
     public bool IncludeSiteDelta { get; init; }
     public bool IncludePeriodCalendars { get; init; }
+    public bool IncludeDashboardCalendars { get; init; }
     // CodeDefiner の引数と同じ書式。最初の引数が操作で、オプションは / で始まる。
     // 値のあるオプションは次の引数を値にする。パスを取るもの（p / sites / output）は / で始まる値も消費する（Linux の絶対パス）。
-    private static readonly string[] FlagOptions = ["y", "f", "c", "prune", "offline", "include-filter-columns", "include-script-queries", "extensions-table", "include-site-delta", "include-period-calendars"];
+    private static readonly string[] FlagOptions = ["y", "f", "c", "prune", "offline", "include-filter-columns", "include-script-queries", "extensions-table", "include-site-delta", "include-period-calendars", "include-dashboard-calendars"];
     private static readonly string[] PathOptions = ["p", "sites", "output", "extension-path"];
     private static readonly string[] ValueOptions = [.. PathOptions, "dbms", "schema", "min-records", "mysql-prefix", "lock-timeout", "exclude-tree", "exclude-site", "names"];
     public static Options Parse(string[] args)
@@ -139,7 +140,11 @@ public sealed record Options(string Action, string? Path, string? SitesFile, str
         {
             throw new UserError("/include-period-calendars requires plan without /prune.");
         }
-        return new(action, V("p"), V("sites"), V("dbms"), V("schema"), Number("min-records", 10000, long.MaxValue), prefix, flags.Contains("include-filter-columns"), flags.Contains("offline"), flags.Contains("prune"), flags.Contains("y"), V("output"), flags.Contains("f"), lockTimeout, exclusion, names, flags.Contains("include-script-queries"), V("extension-path"), flags.Contains("extensions-table")) { IncludeSiteDelta = flags.Contains("include-site-delta"), IncludePeriodCalendars = flags.Contains("include-period-calendars") };
+        if (flags.Contains("include-dashboard-calendars") && (action != "plan" || flags.Contains("prune") || V("sites") != null))
+        {
+            throw new UserError("/include-dashboard-calendars requires live plan without /prune.");
+        }
+        return new(action, V("p"), V("sites"), V("dbms"), V("schema"), Number("min-records", 10000, long.MaxValue), prefix, flags.Contains("include-filter-columns"), flags.Contains("offline"), flags.Contains("prune"), flags.Contains("y"), V("output"), flags.Contains("f"), lockTimeout, exclusion, names, flags.Contains("include-script-queries"), V("extension-path"), flags.Contains("extensions-table")) { IncludeSiteDelta = flags.Contains("include-site-delta"), IncludePeriodCalendars = flags.Contains("include-period-calendars"), IncludeDashboardCalendars = flags.Contains("include-dashboard-calendars") };
     }
 }
 public sealed record Configuration(Dbms Dbms, string Schema, string ConnectionString, bool DisableIndexChangeDetection, int Timeout)

@@ -139,6 +139,22 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
         return new(indexes.DistinctBy(i => i.Signature).ToArray(), diagnostics.Distinct().ToArray());
     }
 
+    public Analysis AnalyzeCalendarReview(Site target, JsonElement view)
+    {
+        indexes.Clear(); diagnostics.Clear();
+        Json.ValidateSettings(target.SiteSettings);
+        Json.ValidateView(view);
+        if (target.RecordCount >= minRecords)
+        {
+            var links = Links(target);
+            foreach (var column in CalendarColumns(target, view, links))
+            {
+                AnalyzeView(target, view, links, calendarColumn: column);
+            }
+        }
+        return new(indexes.DistinctBy(i => i.Signature).ToArray(), diagnostics.Distinct().ToArray());
+    }
+
     public Analysis Analyze(IReadOnlyList<Site> sites)
     {
         indexes.Clear(); diagnostics.Clear();
