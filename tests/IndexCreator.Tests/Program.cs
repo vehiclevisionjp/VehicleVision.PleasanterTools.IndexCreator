@@ -421,6 +421,7 @@ if (args.Contains("--integration"))
     await GanttWorkloadTests.Run(dbms, cs, d, Check);
     await PeriodCalendarWorkloadTests.Run(dbms, cs, d, Check);
     await PermissionWorkloadTests.Run(dbms, cs, d, Check);
+    await RecordPermissionWorkloadTests.Run(dbms, cs, d, Check);
     if (dbms == Dbms.MySQL)
     {
         await database.Execute("ALTER DATABASE `IndexCreatorTest` COLLATE utf8mb4_general_ci");

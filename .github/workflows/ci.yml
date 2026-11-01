@@ -71,6 +71,7 @@ jobs:
             tests/IndexCreator.Tests/bin/Release/net10.0/period-calendar-workload-${{ matrix.dbms }}-*.json
             tests/IndexCreator.Tests/bin/Release/net10.0/gantt-workload-${{ matrix.dbms }}.json
             tests/IndexCreator.Tests/bin/Release/net10.0/permission-workload-${{ matrix.dbms }}.json
+            tests/IndexCreator.Tests/bin/Release/net10.0/record-permission-${{ matrix.dbms }}-*.json
           if-no-files-found: error
       - name: 検証コンテナの終了
         if: always()
