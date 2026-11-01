@@ -40,6 +40,7 @@ public static class Program
                       /include-filter-columns     Include filter controls
                       /include-site-delta         Include the shared Sites(TenantId,UpdatedTime) index
                       /include-period-calendars   Review interval Calendar branch candidates (plan only)
+                      /include-dashboard-calendars Review saved single-target Dashboard Calendars (live plan only)
                       /include-script-queries     Plan resolved script queries for review (plan only; no prune)
                       /extension-path <Parameters> Inspect extension files recursively
                       /extensions-table           Inspect the live Extensions table
@@ -97,6 +98,8 @@ public static class Program
             var analysis = RecordIdLookupPlanner.Complete(
                 new Planner(config.Dbms, options.MinRecords, options.IncludeFilters, options.MysqlPrefix, options.IncludePeriodCalendars).Analyze(sites),
                 sites);
+            var dashboards = options.IncludeDashboardCalendars ? await database!.ReadDashboardSites(cancel.Token) : Array.Empty<Site>();
+            IReadOnlySet<long>? uncertainDashboardSites = null;
             if (options.IncludeScriptQueries)
             {
                 var extensions = new List<AnalysisExtension>();
@@ -108,13 +111,20 @@ public static class Program
                 {
                     extensions.AddRange(await database!.ReadAnalysisExtensions(cancel.Token));
                 }
-                var inspection = ExtensionInventory.Inspect(sites, extensions);
+                var inspection = ExtensionInventory.Inspect(sites.Concat(dashboards).ToArray(), extensions);
+                uncertainDashboardSites = inspection.UncertainSites;
                 var scripts = ScriptQueryPlanner.Analyze(sites, config.Dbms, options.MinRecords, options.MysqlPrefix, inspection.UncertainSites);
                 var mutations = ViewMutationPlanner.Analyze(sites, config.Dbms, options.MinRecords, options.MysqlPrefix, inspection.UncertainSites);
                 analysis = RecordIdLookupPlanner.Complete(new(
                     analysis.Indexes.Concat(scripts.Indexes).Concat(mutations.Indexes).ToArray(),
                     analysis.Diagnostics.Concat(scripts.Diagnostics).Concat(mutations.Diagnostics).Concat(inspection.Diagnostics).ToArray()), sites);
                 RuntimeLog.WriteLine(ExtensionInventory.DescribeInputs(options.ExtensionPath != null, options.ExtensionsTable, extensions));
+            }
+            if (options.IncludeDashboardCalendars)
+            {
+                var dashboardPlan = DashboardCalendarPlanner.Analyze(dashboards, sites, config.Dbms, options.MinRecords, options.MysqlPrefix, options.IncludePeriodCalendars, uncertainDashboardSites);
+                analysis = new(analysis.Indexes.Concat(dashboardPlan.Indexes).DistinctBy(i => i.Signature).ToArray(), analysis.Diagnostics.Concat(dashboardPlan.Diagnostics).ToArray());
+                RuntimeLog.WriteLine($"Dashboard inputs: {dashboards.Count} saved sites. Only explicit single-target saved Calendar parts are reviewed; runtime context is not covered.");
             }
             if (options.IncludeSiteDelta)
             {
