@@ -481,6 +481,7 @@ if (args.Contains("--integration"))
         await database.Execute(d.Drop(change.Spec.Table, change.Name));
     }
     await database.Execute($"DELETE FROM {d.Table("Sites")} WHERE {d.Quote("SiteId")}=900");
+    await DashboardCalendarIntegrationTests.Run(dbms, cs, database, d, Check);
     await PeriodCalendarTests.Run(dbms, cs, database, d, Check);
     await using (var second = new Database(configuration))
     {
