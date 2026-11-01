@@ -6,7 +6,8 @@ Issue #143 の設計調査。単一の物理日付列を明示した保存Calend
 [#150](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.IndexCreator/issues/150)へ分離する。
 期間型CalendarのOR条件とGanttの式を使う条件は、通常の日付列索引でカバー済みとしない。
 この文書は当初の設計調査。単一日付候補は #150、期間型のplan専用レビューは #173 で段階的に実装した。
-Ganttは[比較試験](Ganttの比較試験.md)で評価を進める。全OR・全実行文脈の性能改善を確認したものではない。
+期間型は[全ORの比較試験](期間型Calendarの比較試験.md)でレビュー専用の採用範囲を確認した。
+Ganttは[比較試験](Ganttの比較試験.md)で専用候補の自動追加を不採用とした。全OR・全実行文脈の性能改善を確認したものではない。
 カレンダーのスタイル変更・移行は本作業に含めない。
 
 参照日: 2026-11-01。Pleasanter参照コミット:
