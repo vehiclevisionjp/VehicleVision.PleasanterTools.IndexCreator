@@ -419,6 +419,7 @@ if (args.Contains("--integration"))
     // 本体の MySQL は utf8mb4_general_ci で DB を作る（Definitions/Sqls/MySQL/CreateDatabase.sql）。
     await AdminWorkloadTests.Run(dbms, cs, d, Check);
     await GanttWorkloadTests.Run(dbms, cs, d, Check);
+    await PermissionWorkloadTests.Run(dbms, cs, d, Check);
     if (dbms == Dbms.MySQL)
     {
         await database.Execute("ALTER DATABASE `IndexCreatorTest` COLLATE utf8mb4_general_ci");

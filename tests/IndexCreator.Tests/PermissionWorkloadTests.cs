@@ -1,0 +1,129 @@
+using System.Data.Common;
+using System.Diagnostics;
+using System.Text.Json;
+using VehicleVision.PleasanterTools.IndexCreator;
+
+internal static class PermissionWorkloadTests
+{
+    public static async Task Run(Dbms dbms, string connection, SqlDialect dialect, Action<bool, string> check)
+    {
+        await using DbConnection db = dbms switch { Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(connection), Dbms.PostgreSQL => new Npgsql.NpgsqlConnection(connection), _ => new MySqlConnector.MySqlConnection(connection) };
+        await db.OpenAsync();
+        string Q(string value) => dialect.Quote(value);
+        string T(string name) => dialect.Table("PermissionWorkload" + name);
+        var boolean = dbms == Dbms.SQLServer ? "bit" : "boolean";
+        var date = dbms == Dbms.SQLServer ? "datetime2" : "timestamp";
+        var no = dbms == Dbms.PostgreSQL ? "FALSE" : "0";
+        var yes = dbms == Dbms.PostgreSQL ? "TRUE" : "1";
+        async Task Execute(string sql)
+        {
+            await using var cmd = db.CreateCommand(); cmd.CommandText = sql; cmd.CommandTimeout = 60; await cmd.ExecuteNonQueryAsync();
+        }
+        var created = new List<string>();
+        var sites = Enumerable.Range(1, 400).Select(id => (Tenant: id % 2 + 1, Id: id, Reference: (id % 2 + 1) * 1000 + id % 17)).ToArray();
+        var departments = new Dictionary<int, bool> { [11] = false, [12] = true, [21] = false, [22] = true };
+        var groups = new Dictionary<int, bool> { [101] = false, [102] = true, [103] = false, [201] = false, [202] = true, [203] = false };
+        var users = new Dictionary<int, bool> { [1001] = false, [1002] = true, [1003] = false, [2001] = false };
+        var members = new (int Group, int Dept, int User, bool Child)[] { (101, 11, 0, false), (101, 11, 0, true), (103, 0, 1001, false), (102, 11, 0, false), (201, 21, 0, false), (203, 0, 2001, false) };
+        var permissions = new List<(int Reference, int Dept, int Group, int User, int Permission)>();
+        for (var tenant = 1; tenant <= 2; tenant++)
+        {
+            for (var reference = 0; reference < 17; reference++)
+            {
+                var r = tenant * 1000 + reference; var dept = tenant * 10 + 1; var user = tenant * 1000 + 1; var group = tenant * 100 + 1;
+                permissions.AddRange(new[] { (r, dept, 0, 0, 1), (r, dept, 0, user, 1), (r, 0, group, 0, 2), (r, 0, group + 2, 0, 4), (r, 0, 0, user, 4), (r, 0, 0, -1, 8), (r, 0, group + 1, 0, 16), (r, dept + 1, 0, 0, 32) });
+            }
+        }
+        var reports = new List<object>();
+        void Bind(DbCommand command, int tenant, int dept, int user)
+        {
+            foreach (var (name, value) in new[] { ("@tenant", tenant), ("@dept", dept), ("@user", user) })
+            {
+                var p = command.CreateParameter(); p.ParameterName = name; p.DbType = System.Data.DbType.Int32; p.Value = value; command.Parameters.Add(p);
+            }
+        }
+        try
+        {
+            var definitions = new[]
+            {
+                ("Sites", $"{Q("TenantId")} int NOT NULL,{Q("SiteId")} bigint NOT NULL,{Q("UpdatedTime")} {date} NOT NULL,{Q("InheritPermission")} bigint NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("SiteId")},{Q("UpdatedTime")})"),
+                ("Permissions", $"{Q("ReferenceId")} bigint NOT NULL,{Q("DeptId")} int NOT NULL,{Q("GroupId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("PermissionType")} int NOT NULL,PRIMARY KEY({Q("ReferenceId")},{Q("DeptId")},{Q("GroupId")},{Q("UserId")})"),
+                ("Depts", $"{Q("TenantId")} int NOT NULL,{Q("DeptId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("DeptId")})"),
+                ("Groups", $"{Q("TenantId")} int NOT NULL,{Q("GroupId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("GroupId")})"),
+                ("Users", $"{Q("TenantId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("UserId")})"),
+                ("GroupMembers", $"{Q("GroupId")} int NOT NULL,{Q("DeptId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("ChildGroup")} {boolean} NOT NULL,PRIMARY KEY({Q("GroupId")},{Q("DeptId")},{Q("UserId")},{Q("ChildGroup")})"),
+                ("GroupChildren", $"{Q("GroupId")} int NOT NULL,{Q("ChildId")} int NOT NULL,PRIMARY KEY({Q("GroupId")},{Q("ChildId")})")
+            };
+            foreach (var (name, columns) in definitions) { await Execute($"CREATE TABLE {T(name)} ({columns})"); created.Add(name); }
+            var standard = new[] { ("Sites", "SiteId"), ("Depts", "Disabled"), ("Groups", "Disabled"), ("Users", "UserId,TenantId"), ("GroupMembers", "DeptId,GroupId"), ("GroupMembers", "UserId,GroupId"), ("GroupMembers", "GroupId"), ("GroupChildren", "ChildId,GroupId") };
+            for (var i = 0; i < standard.Length; i++) { var (name, columns) = standard[i]; await Execute($"CREATE INDEX {Q("permission_standard_" + i)} ON {T(name)} ({string.Join(',', columns.Split(',').Select(Q))})"); }
+            await Execute($"INSERT INTO {T("Sites")} VALUES " + string.Join(',', sites.Select(s => $"({s.Tenant},{s.Id},'2026-01-01',{s.Reference})")));
+            await Execute($"INSERT INTO {T("Permissions")} VALUES " + string.Join(',', permissions.Select(p => $"({p.Reference},{p.Dept},{p.Group},{p.User},{p.Permission})")));
+            await Execute($"INSERT INTO {T("Depts")} VALUES " + string.Join(',', departments.Select(p => $"({p.Key / 10},{p.Key},{(p.Value ? yes : no)})")));
+            await Execute($"INSERT INTO {T("Groups")} VALUES " + string.Join(',', groups.Select(p => $"({p.Key / 100},{p.Key},{(p.Value ? yes : no)})")));
+            await Execute($"INSERT INTO {T("Users")} VALUES " + string.Join(',', users.Select(p => $"({p.Key / 1000},{p.Key},{(p.Value ? yes : no)})")));
+            await Execute($"INSERT INTO {T("GroupMembers")} VALUES " + string.Join(',', members.Select(m => $"({m.Group},{m.Dept},{m.User},{(m.Child ? yes : no)})")));
+            await Execute($"INSERT INTO {T("GroupChildren")} VALUES (101,103),(201,203)");
+            foreach (var reverse in new[] { false, true })
+            {
+                await using var childQuery = db.CreateCommand();
+                childQuery.CommandText = reverse
+                    ? $"SELECT {Q("GroupId")} FROM {T("GroupChildren")} WHERE {Q("ChildId")}=103"
+                    : $"SELECT {Q("ChildId")} FROM {T("GroupChildren")} WHERE {Q("GroupId")}=101";
+                check(Convert.ToInt32(await childQuery.ExecuteScalarAsync()) == (reverse ? 101 : 103), "Group child forward/reverse access preserves fixture on " + dbms);
+            }
+            var join = $" FROM {T("Sites")} s JOIN {T("Permissions")} p ON s.{Q("InheritPermission")}=p.{Q("ReferenceId")}";
+            var tails = new[]
+            {
+                $" JOIN {T("Depts")} d ON d.{Q("DeptId")}=p.{Q("DeptId")} WHERE d.{Q("DeptId")}=@dept AND d.{Q("Disabled")}={no}",
+                $" JOIN {T("Groups")} g ON g.{Q("GroupId")}=p.{Q("GroupId")} JOIN {T("GroupMembers")} m ON m.{Q("GroupId")}=g.{Q("GroupId")} JOIN {T("Depts")} d ON d.{Q("DeptId")}=m.{Q("DeptId")} WHERE g.{Q("Disabled")}={no} AND d.{Q("Disabled")}={no} AND d.{Q("DeptId")}=@dept",
+                $" JOIN {T("Groups")} g ON g.{Q("GroupId")}=p.{Q("GroupId")} JOIN {T("GroupMembers")} m ON m.{Q("GroupId")}=g.{Q("GroupId")} JOIN {T("Users")} u ON u.{Q("UserId")}=m.{Q("UserId")} WHERE g.{Q("Disabled")}={no} AND u.{Q("Disabled")}={no} AND u.{Q("UserId")}=@user",
+                $" WHERE p.{Q("UserId")}>0 AND p.{Q("UserId")}=@user", $" WHERE p.{Q("UserId")}=-1"
+            };
+            var union = string.Join(" UNION ALL ", tails.Select(t => $"SELECT DISTINCT s.{Q("SiteId")} AS {Q("ReferenceId")},p.{Q("PermissionType")}" + join + t + $" AND s.{Q("TenantId")}=@tenant"));
+            var sql = $"SELECT {Q("ReferenceId")},{Q("PermissionType")} FROM ({union}) combined ORDER BY {Q("ReferenceId")},{Q("PermissionType")}";
+            foreach (var phase in new[] { "standard", "sites-candidate", "combined-candidates" })
+            {
+                if (phase == "sites-candidate") { await Execute($"CREATE INDEX {Q("permission_sites_candidate")} ON {T("Sites")} ({Q("TenantId")},{Q("InheritPermission")},{Q("SiteId")})"); }
+                if (phase == "combined-candidates")
+                {
+                    foreach (var column in new[] { "DeptId", "GroupId", "UserId" }) { await Execute($"CREATE INDEX {Q("permission_" + column)} ON {T("Permissions")} ({Q(column)},{Q("ReferenceId")},{Q("PermissionType")})"); }
+                }
+                foreach (var name in created) { await Execute(dbms switch { Dbms.SQLServer => $"UPDATE STATISTICS {T(name)} WITH FULLSCAN", Dbms.PostgreSQL => "ANALYZE " + T(name), _ => "ANALYZE TABLE " + T(name) }); }
+                foreach (var context in new (int Tenant, int Dept, int User)[] { (1, 11, 1001), (1, 0, 1003), (2, 21, 2001), (1, 12, 1002) })
+                {
+                    var expected = new List<(long Id, int Permission)>();
+                    for (var branch = 0; branch < 5; branch++)
+                    {
+                        bool Matches((int Reference, int Dept, int Group, int User, int Permission) p) => branch switch
+                        {
+                            0 => p.Dept == context.Dept && !departments.GetValueOrDefault(context.Dept, true),
+                            1 => !groups.GetValueOrDefault(p.Group, true) && !departments.GetValueOrDefault(context.Dept, true) && members.Any(m => m.Group == p.Group && m.Dept == context.Dept),
+                            2 => !groups.GetValueOrDefault(p.Group, true) && !users.GetValueOrDefault(context.User, true) && members.Any(m => m.Group == p.Group && m.User == context.User),
+                            3 => p.User > 0 && p.User == context.User,
+                            _ => p.User == -1
+                        };
+                        expected.AddRange(sites.Where(s => s.Tenant == context.Tenant).SelectMany(s => permissions.Where(p => p.Reference == s.Reference && Matches(p)).Select(p => ((long)s.Id, p.Permission))).Distinct());
+                    }
+                    var ordered = expected.OrderBy(p => p.Id).ThenBy(p => p.Permission).ToArray(); var times = new List<double>();
+                    for (var sample = 0; sample < 6; sample++)
+                    {
+                        await using var cmd = db.CreateCommand(); cmd.CommandText = sql; Bind(cmd, context.Tenant, context.Dept, context.User);
+                        var timer = Stopwatch.StartNew(); await using var reader = await cmd.ExecuteReaderAsync(); var actual = new List<(long, int)>();
+                        while (await reader.ReadAsync()) { actual.Add((Convert.ToInt64(reader.GetValue(0)), Convert.ToInt32(reader.GetValue(1)))); }
+                        timer.Stop(); check(actual.SequenceEqual(ordered), "Five permission branches preserve tenant, disabled and duplicate semantics: " + dbms + phase);
+                        if (sample > 0) { times.Add(timer.Elapsed.TotalMilliseconds); }
+                    }
+                    await using var plan = db.CreateCommand(); Bind(plan, context.Tenant, context.Dept, context.User);
+                    plan.CommandText = dbms switch { Dbms.SQLServer => "SET STATISTICS XML ON; " + sql + "; SET STATISTICS XML OFF;", Dbms.PostgreSQL => "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) " + sql, _ => "EXPLAIN ANALYZE " + sql };
+                    await using var plans = await plan.ExecuteReaderAsync(); if (dbms == Dbms.SQLServer) { while (await plans.ReadAsync()) { } await plans.NextResultAsync(); }
+                    var lines = new List<string>(); while (await plans.ReadAsync()) { lines.Add(plans.GetString(0)); }
+                    check(lines.Count > 0, "Permission execution plan captured on " + dbms + phase);
+                    times.Sort(); reports.Add(new { Phase = phase, context.Tenant, context.Dept, context.User, Rows = ordered.Length, MedianClientMs = times[2], SamplesMs = times, Plan = string.Join('\n', lines) });
+                }
+            }
+            await File.WriteAllTextAsync(Path.Combine(AppContext.BaseDirectory, "permission-workload-" + dbms + ".json"), JsonSerializer.Serialize(reports));
+        }
+        finally { foreach (var name in created.AsEnumerable().Reverse()) { await Execute("DROP TABLE " + T(name)); } }
+    }
+}
