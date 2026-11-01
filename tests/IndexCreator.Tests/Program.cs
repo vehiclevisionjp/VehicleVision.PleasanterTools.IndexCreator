@@ -22,6 +22,9 @@ void Reject(Action action, string name)
 Site SiteWith(string settings, long count = 20000, string table = "Results") => new(1, table, Json.Parse(settings), count);
 ScriptExtensionTests.Run(Check, Reject);
 CalendarTests.Run(Check);
+Check(Options.Parse(["plan", "/include-period-calendars"]).IncludePeriodCalendars, "Interval planning is explicit");
+Reject(() => Options.Parse(["_rds", "/include-period-calendars"]), "Interval review cannot auto-apply");
+Reject(() => Options.Parse(["plan", "/include-period-calendars", "/prune"]), "Interval review cannot prune");
 var deltaSpec = SiteDeltaPlanner.Candidate;
 Check(IndexSpec.IsManaged("Sites", deltaSpec.Name), "Shared delta index has a dedicated managed namespace");
 Check(!IndexSpec.IsManaged("Sites", "IX_vvplic_Sites_1_TenantId_0123456789abcdef"), "Sites indexes are not record-site managed indexes");
@@ -458,6 +461,7 @@ if (args.Contains("--integration"))
     Check(Reconciler.Plan([SiteDeltaPlanner.Candidate], deltaCatalog, false).Single().Kind == ChangeKind.Keep, "Shared delta roundtrip on " + dbms);
     Check(!Reconciler.Plan([], SiteDeltaPlanner.Scope(deltaCatalog, false), true).Any(c => c.Spec.Table == "Sites"), "Ordinary prune excludes delta on " + dbms);
     await database.Execute(d.Drop("Sites", SiteDeltaPlanner.Candidate.Name));
+    await PeriodCalendarTests.Run(dbms, cs, database, d, Check);
     await using (var second = new Database(configuration))
     {
         await second.Open(default);

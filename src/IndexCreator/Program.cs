@@ -39,6 +39,7 @@ public static class Program
                       /mysql-prefix <1..191>      TEXT prefix length (default: 100)
                       /include-filter-columns     Include filter controls
                       /include-site-delta         Include the shared Sites(TenantId,UpdatedTime) index
+                      /include-period-calendars   Review interval Calendar branch candidates (plan only)
                       /include-script-queries     Plan resolved script queries for review (plan only; no prune)
                       /extension-path <Parameters> Inspect extension files recursively
                       /extensions-table           Inspect the live Extensions table
@@ -94,7 +95,7 @@ public static class Program
             }
 
             var analysis = RecordIdLookupPlanner.Complete(
-                new Planner(config.Dbms, options.MinRecords, options.IncludeFilters, options.MysqlPrefix).Analyze(sites),
+                new Planner(config.Dbms, options.MinRecords, options.IncludeFilters, options.MysqlPrefix, options.IncludePeriodCalendars).Analyze(sites),
                 sites);
             if (options.IncludeScriptQueries)
             {
