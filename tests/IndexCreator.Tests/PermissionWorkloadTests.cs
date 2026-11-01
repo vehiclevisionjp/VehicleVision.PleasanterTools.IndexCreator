@@ -15,9 +15,10 @@ internal static class PermissionWorkloadTests
         var date = dbms == Dbms.SQLServer ? "datetime2" : "timestamp";
         var no = dbms == Dbms.PostgreSQL ? "FALSE" : "0";
         var yes = dbms == Dbms.PostgreSQL ? "TRUE" : "1";
-        async Task Execute(string sql)
+        DbTransaction? transaction = null;
+        async Task<int> Execute(string sql)
         {
-            await using var cmd = db.CreateCommand(); cmd.CommandText = sql; cmd.CommandTimeout = 60; await cmd.ExecuteNonQueryAsync();
+            await using var cmd = db.CreateCommand(); cmd.CommandText = sql; cmd.CommandTimeout = 60; cmd.Transaction = transaction; return await cmd.ExecuteNonQueryAsync();
         }
         var created = new List<string>();
         var sites = Enumerable.Range(1, 400).Select(id => (Tenant: id % 2 + 1, Id: id, Reference: (id % 2 + 1) * 1000 + id % 17)).ToArray();
@@ -35,6 +36,8 @@ internal static class PermissionWorkloadTests
             }
         }
         var reports = new List<object>();
+        var writes = new List<object>();
+        var sizes = new List<object>();
         void Bind(DbCommand command, int tenant, int dept, int user)
         {
             foreach (var (name, value) in new[] { ("@tenant", tenant), ("@dept", dept), ("@user", user) })
@@ -82,14 +85,87 @@ internal static class PermissionWorkloadTests
             };
             var union = string.Join(" UNION ALL ", tails.Select(t => $"SELECT DISTINCT s.{Q("SiteId")} AS {Q("ReferenceId")},p.{Q("PermissionType")}" + join + t + $" AND s.{Q("TenantId")}=@tenant"));
             var sql = $"SELECT {Q("ReferenceId")},{Q("PermissionType")} FROM ({union}) combined ORDER BY {Q("ReferenceId")},{Q("PermissionType")}";
-            foreach (var phase in new[] { "standard", "sites-candidate", "combined-candidates" })
+            var candidates = new[]
             {
-                if (phase == "sites-candidate") { await Execute($"CREATE INDEX {Q("permission_sites_candidate")} ON {T("Sites")} ({Q("TenantId")},{Q("InheritPermission")},{Q("SiteId")})"); }
-                if (phase == "combined-candidates")
+                (Phase:"sites",Table:"Sites",Name:"permission_sites_candidate",Keys:$"{Q("TenantId")},{Q("InheritPermission")},{Q("SiteId")}"),
+                (Phase:"dept",Table:"Permissions",Name:"permission_dept_candidate",Keys:$"{Q("DeptId")},{Q("ReferenceId")},{Q("PermissionType")}"),
+                (Phase:"group",Table:"Permissions",Name:"permission_group_candidate",Keys:$"{Q("GroupId")},{Q("ReferenceId")},{Q("PermissionType")}"),
+                (Phase:"user",Table:"Permissions",Name:"permission_user_candidate",Keys:$"{Q("UserId")},{Q("ReferenceId")},{Q("PermissionType")}")
+            };
+            var previous = "standard";
+            foreach (var phase in new[] { "standard", "sites", "dept", "group", "user", "combined" })
+            {
+                foreach (var candidate in candidates.Where(c => previous == "combined" || c.Phase == previous))
                 {
-                    foreach (var column in new[] { "DeptId", "GroupId", "UserId" }) { await Execute($"CREATE INDEX {Q("permission_" + column)} ON {T("Permissions")} ({Q(column)},{Q("ReferenceId")},{Q("PermissionType")})"); }
+                    await Execute(dialect.Drop("PermissionWorkload" + candidate.Table, candidate.Name));
                 }
+                var active = candidates.Where(c => phase == "combined" || c.Phase == phase).ToArray();
+                foreach (var candidate in active) { await Execute($"CREATE INDEX {Q(candidate.Name)} ON {T(candidate.Table)} ({candidate.Keys})"); }
+                previous = phase;
                 foreach (var name in created) { await Execute(dbms switch { Dbms.SQLServer => $"UPDATE STATISTICS {T(name)} WITH FULLSCAN", Dbms.PostgreSQL => "ANALYZE " + T(name), _ => "ANALYZE TABLE " + T(name) }); }
+                foreach (var candidate in active)
+                {
+                    await using var cmd = db.CreateCommand();
+                    cmd.CommandText = dbms switch
+                    {
+                        Dbms.SQLServer => $"SELECT SUM(p.used_page_count)*8192 FROM sys.dm_db_partition_stats p JOIN sys.indexes i ON i.object_id=p.object_id AND i.index_id=p.index_id WHERE p.object_id=OBJECT_ID(N'{T(candidate.Table)}') AND i.name=@name",
+                        Dbms.PostgreSQL => $"SELECT pg_relation_size('{dialect.Table(candidate.Name)}')",
+                        _ => "SELECT SUM(stat_value)*@@innodb_page_size FROM mysql.innodb_index_stats WHERE database_name=DATABASE() AND table_name=@table AND index_name=@name AND stat_name='size'"
+                    };
+                    if (dbms != Dbms.PostgreSQL) { var p = cmd.CreateParameter(); p.ParameterName = "@name"; p.Value = candidate.Name; cmd.Parameters.Add(p); }
+                    if (dbms == Dbms.MySQL) { var p = cmd.CreateParameter(); p.ParameterName = "@table"; p.Value = "PermissionWorkload" + candidate.Table; cmd.Parameters.Add(p); }
+                    var bytes = Convert.ToInt64(await cmd.ExecuteScalarAsync()); check(bytes > 0, "Permission candidate capacity reported on " + dbms);
+                    sizes.Add(new { Phase = phase, Index = candidate.Name, Bytes = bytes, MysqlSizeIsEstimate = dbms == Dbms.MySQL });
+                }
+                foreach (var workload in new[] { "insert-grants", "update-grants", "delete-grants", "update-inheritance" })
+                {
+                    foreach (var mode in new[] { "rollback", "commit" })
+                    {
+                        for (var sample = 0; sample < 6; sample++)
+                        {
+                            await using var tx = await db.BeginTransactionAsync(); transaction = tx; var committed = false;
+                            try
+                            {
+                                var write = workload switch
+                                {
+                                    "insert-grants" => $"INSERT INTO {T("Permissions")} VALUES " + string.Join(',', Enumerable.Range(9001, 100).Select(id => $"({id},0,0,1001,4)")),
+                                    "update-grants" => $"UPDATE {T("Permissions")} SET {Q("PermissionType")}={Q("PermissionType")}+64",
+                                    "delete-grants" => $"DELETE FROM {T("Permissions")} WHERE {Q("ReferenceId")}=1000",
+                                    _ => $"UPDATE {T("Sites")} SET {Q("InheritPermission")}={Q("InheritPermission")}+10000 WHERE {Q("TenantId")}=1"
+                                };
+                                var timer = Stopwatch.StartNew();
+                                var affected = await Execute(write);
+                                if (mode == "commit") { await tx.CommitAsync(); committed = true; }
+                                timer.Stop();
+                                var expectedCount = workload switch
+                                {
+                                    "insert-grants" => 100,
+                                    "update-grants" => permissions.Count,
+                                    "delete-grants" => 8,
+                                    _ => sites.Count(s => s.Tenant == 1)
+                                };
+                                check(affected == expectedCount, "Permission write row count on " + dbms);
+                                if (sample > 0) { writes.Add(new { Phase = phase, Workload = workload, Mode = mode, Sample = sample, ClientMs = timer.Elapsed.TotalMilliseconds }); }
+                            }
+                            finally
+                            {
+                                if (!committed) { await tx.RollbackAsync(); }
+                                transaction = null;
+                                if (committed)
+                                {
+                                    var restore = workload switch
+                                    {
+                                        "insert-grants" => $"DELETE FROM {T("Permissions")} WHERE {Q("ReferenceId")}>=9001",
+                                        "update-grants" => $"UPDATE {T("Permissions")} SET {Q("PermissionType")}={Q("PermissionType")}-64",
+                                        "delete-grants" => $"INSERT INTO {T("Permissions")} VALUES " + string.Join(',', permissions.Where(p => p.Reference == 1000).Select(p => $"({p.Reference},{p.Dept},{p.Group},{p.User},{p.Permission})")),
+                                        _ => $"UPDATE {T("Sites")} SET {Q("InheritPermission")}={Q("InheritPermission")}-10000 WHERE {Q("TenantId")}=1"
+                                    };
+                                    await Execute(restore);
+                                }
+                            }
+                        }
+                    }
+                }
                 foreach (var context in new (int Tenant, int Dept, int User)[] { (1, 11, 1001), (1, 0, 1003), (2, 21, 2001), (1, 12, 1002) })
                 {
                     var expected = new List<(long Id, int Permission)>();
@@ -122,7 +198,7 @@ internal static class PermissionWorkloadTests
                     times.Sort(); reports.Add(new { Phase = phase, context.Tenant, context.Dept, context.User, Rows = ordered.Length, MedianClientMs = times[2], SamplesMs = times, Plan = string.Join('\n', lines) });
                 }
             }
-            await File.WriteAllTextAsync(Path.Combine(AppContext.BaseDirectory, "permission-workload-" + dbms + ".json"), JsonSerializer.Serialize(reports));
+            await File.WriteAllTextAsync(Path.Combine(AppContext.BaseDirectory, "permission-workload-" + dbms + ".json"), JsonSerializer.Serialize(new { Reports = reports, Writes = writes, IndexSizes = sizes }));
         }
         finally { foreach (var name in created.AsEnumerable().Reverse()) { await Execute("DROP TABLE " + T(name)); } }
     }
