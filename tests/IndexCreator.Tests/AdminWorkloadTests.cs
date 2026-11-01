@@ -7,6 +7,16 @@ internal static class AdminWorkloadTests
 {
     public static async Task Run(Dbms dbms, string connection, SqlDialect dialect, Action<bool, string> check)
     {
+        await RunScenario(dbms, connection, dialect, check, "small-uniform", 400, false);
+        await RunScenario(dbms, connection, dialect, check, "larger-skewed", 4000, true);
+    }
+
+    private static async Task RunScenario(Dbms dbms, string connection, SqlDialect dialect, Action<bool, string> check, string scenario, int rowCount, bool skewed)
+    {
+        int Tenant(long id) => skewed && id % 100 < 75 ? 1 : (int)(id % 4 + 1);
+        int Owner(int id) => skewed ? (id % 10 < 8 ? 1 : id % 19 + 2) : id % 19 + 1;
+        int Kind(int id) => id % (skewed ? 20 : 2) == 0 ? 7 : 0;
+        string Record(int id) => $"({Tenant(id)},{id},{Owner(id)},'2026-01-{id % 28 + 1:00}',{id % 31})";
         await using DbConnection db = dbms switch
         {
             Dbms.SQLServer => new Microsoft.Data.SqlClient.SqlConnection(connection),
@@ -96,12 +106,13 @@ internal static class AdminWorkloadTests
             await Execute($"CREATE UNIQUE INDEX {Q("admin_log_standard_time")} ON {logs} ({Q("CreatedTime")} DESC,{Q("RecordId")})");
             await Execute($"CREATE INDEX {Q("admin_member_standard_reverse")} ON {members} ({Q("UserId")},{Q("GroupId")})");
             await Execute($"INSERT INTO {members} VALUES " + string.Join(',', Enumerable.Range(1, 23).Select(i => $"({i},{i % 3 + 1})")));
-            for (var batch = 0; batch < 8; batch++)
+            for (var batch = 0; batch < rowCount; batch += 500)
             {
-                var values = Enumerable.Range(batch * 500 + 1, 500).Select(i => $"({i % 4 + 1},{i},{(i % 10 < 8 ? 1 : i % 19 + 2)},'2026-01-{i % 28 + 1:00}',{i % 31})");
+                var ids = Enumerable.Range(batch + 1, Math.Min(500, rowCount - batch));
+                var values = ids.Select(Record);
                 await Execute($"INSERT INTO {table} VALUES " + string.Join(',', values));
-                await Execute($"INSERT INTO {permissions} VALUES " + string.Join(',', Enumerable.Range(batch * 500 + 1, 500).Select(i => $"({i},{i % 23 + 1})")));
-                await Execute($"INSERT INTO {logs} VALUES " + string.Join(',', Enumerable.Range(batch * 500 + 1, 500).Select(i => $"('2026-01-{i % 28 + 1:00}',{i},{(i % 20 == 0 ? 7 : 0)})")));
+                await Execute($"INSERT INTO {permissions} VALUES " + string.Join(',', ids.Select(i => $"({i},{i % 23 + 1})")));
+                await Execute($"INSERT INTO {logs} VALUES " + string.Join(',', ids.Select(i => $"('2026-01-{i % 28 + 1:00}',{i},{Kind(i)})")));
             }
             var cases = new (string Name, string Where)[]
             {
@@ -233,9 +244,9 @@ internal static class AdminWorkloadTests
                                     }
                                     else
                                     {
-                                        foreach (var batch in Enumerable.Range(1, 4000).Where(i => i % 4 == 0).Chunk(500))
+                                        foreach (var batch in Enumerable.Range(1, rowCount).Where(i => Tenant(i) == 1).Chunk(500))
                                         {
-                                            await Execute($"INSERT INTO {table} VALUES " + string.Join(',', batch.Select(i => $"({i % 4 + 1},{i},{(i % 10 < 8 ? 1 : i % 19 + 2)},'2026-01-{i % 28 + 1:00}',{i % 31})")));
+                                            await Execute($"INSERT INTO {table} VALUES " + string.Join(',', batch.Select(Record)));
                                         }
                                     }
                                 }
@@ -255,13 +266,29 @@ internal static class AdminWorkloadTests
                         : $"SELECT {Q("RecordId")} FROM {table} WHERE {item.Where} ORDER BY {Q("UpdatedTime")},{Q("RecordId")}";
                     var warmup = await Read(sql);
                     check(item.Name.EndsWith("empty", StringComparison.Ordinal) ? warmup.Rows.Length == 0 : warmup.Rows.Length > 0, "Admin case has expected empty/nonempty result: " + item.Name);
-                    check(isLog || warmup.Rows.All(id => id % 4 + 1 == (item.Name == "other-tenant" ? 4 : 1)), "Admin tenant isolation: " + item.Name);
+                    check(isLog || warmup.Rows.All(id => Tenant(id) == (item.Name == "other-tenant" ? 4 : 1)), "Admin tenant isolation: " + item.Name);
                     if (isLog)
                     {
-                        var expected = Enumerable.Range(1, 4000).Where(id => id % 28 + 1 >= 20
-                            && (item.Name == "log-period" || item.Name == "log-common-kind" && id % 20 != 0 || item.Name == "log-rare-kind" && id % 20 == 0))
+                        var expected = Enumerable.Range(1, rowCount).Where(id => id % 28 + 1 >= 20
+                            && (item.Name == "log-period" || item.Name == "log-common-kind" && Kind(id) == 0 || item.Name == "log-rare-kind" && Kind(id) == 7))
                             .OrderByDescending(id => id % 28 + 1).ThenBy(id => id).Select(id => (long)id);
                         check(warmup.Rows.SequenceEqual(expected), "Log results match independent synthetic oracle: " + item.Name);
+                    }
+                    else
+                    {
+                        var expected = Enumerable.Range(1, rowCount).Where(id => Tenant(id) == (item.Name == "other-tenant" ? 4 : 1)
+                            && (item.Name switch
+                            {
+                                "tenant" => true,
+                                "frequent-owner" or "other-tenant" => Owner(id) == 1,
+                                "rare-owner" => Owner(id) == 19,
+                                "updated-range" => id % 28 + 1 >= 20,
+                                "permission-subject" => id % 23 + 1 == 7,
+                                "parent" => id % 31 == 7,
+                                "membership" => (id % 23 + 1) % 3 + 1 == 2,
+                                _ => false
+                            })).OrderBy(id => id % 28 + 1).ThenBy(id => id).Select(id => (long)id);
+                        check(warmup.Rows.SequenceEqual(expected), "Admin results match independent synthetic oracle: " + item.Name);
                     }
                     if (phase == "standard")
                     {
@@ -284,8 +311,8 @@ internal static class AdminWorkloadTests
                     await Execute("SET STATISTICS IO OFF");
                 }
             }
-            var path = Path.Combine(AppContext.BaseDirectory, "admin-workload-" + dbms + ".json");
-            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { Dbms = dbms.ToString(), SyntheticOnly = true, SqlServerPlanIsEstimated = true, Reports = reports, Writes = writes, Sizes = sizes, IndexSizes = indexSizes }, new JsonSerializerOptions { WriteIndented = true }));
+            var path = Path.Combine(AppContext.BaseDirectory, "admin-workload-" + dbms + "-" + scenario + ".json");
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { Dbms = dbms.ToString(), Scenario = scenario, RowCount = rowCount, Skewed = skewed, SyntheticOnly = true, SqlServerPlanIsEstimated = true, Reports = reports, Writes = writes, Sizes = sizes, IndexSizes = indexSizes }, new JsonSerializerOptions { WriteIndented = true }));
             Console.WriteLine("Admin workload comparison saved: " + path);
         }
         finally
