@@ -84,6 +84,7 @@ internal static class AdminWorkloadTests
         var reports = new List<object>();
         var writes = new List<object>();
         var sizes = new List<object>();
+        var indexSizes = new List<object>();
         var baseline = new Dictionary<string, long[]>();
         await Execute($"CREATE TABLE {table} ({Q("TenantId")} int NOT NULL, {Q("RecordId")} bigint NOT NULL, {Q("OwnerId")} int NOT NULL, {Q("UpdatedTime")} {(dbms == Dbms.SQLServer ? "datetime2" : "timestamp")} NOT NULL, {Q("ParentId")} int NOT NULL, PRIMARY KEY ({Q("TenantId")},{Q("RecordId")}))");
         try
@@ -119,16 +120,27 @@ internal static class AdminWorkloadTests
                 ("log-rare-kind", $"{Q("Kind")}=7 AND {Q("CreatedTime")}>='2026-01-20'"),
                 ("log-empty", $"{Q("Kind")}=999 AND {Q("CreatedTime")}>='2026-01-20'")
             };
-            foreach (var phase in new[] { "standard", "candidate" })
+            var definitions = new[]
             {
-                if (phase == "candidate")
+                (Phase: "owner", Table: "AdminWorkloadFixture", Name: "admin_fixture_candidate", Keys: $"{Q("TenantId")},{Q("OwnerId")},{Q("UpdatedTime")},{Q("RecordId")}"),
+                (Phase: "updated", Table: "AdminWorkloadFixture", Name: "admin_fixture_updated", Keys: $"{Q("TenantId")},{Q("UpdatedTime")},{Q("RecordId")}"),
+                (Phase: "subject", Table: "AdminPermissionFixture", Name: "admin_fixture_subject", Keys: $"{Q("SubjectId")},{Q("ReferenceId")}"),
+                (Phase: "parent", Table: "AdminWorkloadFixture", Name: "admin_fixture_parent", Keys: $"{Q("TenantId")},{Q("ParentId")},{Q("UpdatedTime")},{Q("RecordId")}"),
+                (Phase: "log", Table: "AdminLogFixture", Name: "admin_log_candidate", Keys: $"{Q("Kind")},{Q("CreatedTime")} DESC,{Q("RecordId")}")
+            };
+            var previousPhase = "standard";
+            foreach (var phase in new[] { "standard", "owner", "updated", "subject", "parent", "log", "candidate" })
+            {
+                foreach (var definition in definitions.Where(d => previousPhase == "candidate" || d.Phase == previousPhase))
                 {
-                    await Execute($"CREATE INDEX {Q("admin_fixture_candidate")} ON {table} ({Q("TenantId")},{Q("OwnerId")},{Q("UpdatedTime")},{Q("RecordId")})");
-                    await Execute($"CREATE INDEX {Q("admin_fixture_updated")} ON {table} ({Q("TenantId")},{Q("UpdatedTime")},{Q("RecordId")})");
-                    await Execute($"CREATE INDEX {Q("admin_fixture_subject")} ON {permissions} ({Q("SubjectId")},{Q("ReferenceId")})");
-                    await Execute($"CREATE INDEX {Q("admin_fixture_parent")} ON {table} ({Q("TenantId")},{Q("ParentId")},{Q("UpdatedTime")},{Q("RecordId")})");
-                    await Execute($"CREATE INDEX {Q("admin_log_candidate")} ON {logs} ({Q("Kind")},{Q("CreatedTime")} DESC,{Q("RecordId")})");
+                    await Execute(dialect.Drop(definition.Table, definition.Name));
                 }
+                var active = definitions.Where(d => phase == "candidate" || d.Phase == phase).ToArray();
+                foreach (var definition in active)
+                {
+                    await Execute($"CREATE INDEX {Q(definition.Name)} ON {dialect.Table(definition.Table)} ({definition.Keys})");
+                }
+                previousPhase = phase;
                 foreach (var fixture in new[] { table, permissions, members, logs })
                 {
                     await Execute(dbms switch
@@ -137,6 +149,27 @@ internal static class AdminWorkloadTests
                         Dbms.PostgreSQL => "ANALYZE " + fixture,
                         _ => "ANALYZE TABLE " + fixture
                     });
+                }
+                foreach (var definition in active)
+                {
+                    await using var sizeCommand = db.CreateCommand();
+                    sizeCommand.CommandText = dbms switch
+                    {
+                        Dbms.SQLServer => $"SELECT SUM(p.used_page_count)*8192 FROM sys.dm_db_partition_stats p JOIN sys.indexes i ON i.object_id=p.object_id AND i.index_id=p.index_id WHERE p.object_id=OBJECT_ID(N'{dialect.Table(definition.Table)}') AND i.name=@name",
+                        Dbms.PostgreSQL => $"SELECT pg_relation_size('{dialect.Table(definition.Name)}')",
+                        _ => "SELECT SUM(stat_value)*@@innodb_page_size FROM mysql.innodb_index_stats WHERE database_name=DATABASE() AND table_name=@table AND index_name=@name AND stat_name='size'"
+                    };
+                    if (dbms != Dbms.PostgreSQL)
+                    {
+                        var name = sizeCommand.CreateParameter(); name.ParameterName = "@name"; name.Value = definition.Name; sizeCommand.Parameters.Add(name);
+                    }
+                    if (dbms == Dbms.MySQL)
+                    {
+                        var target = sizeCommand.CreateParameter(); target.ParameterName = "@table"; target.Value = definition.Table; sizeCommand.Parameters.Add(target);
+                    }
+                    var bytes = Convert.ToInt64(await sizeCommand.ExecuteScalarAsync());
+                    check(bytes > 0, "Individual candidate capacity is available: " + definition.Phase);
+                    indexSizes.Add(new { Phase = phase, Index = definition.Name, Bytes = bytes, MysqlSizeIsEstimate = dbms == Dbms.MySQL });
                 }
                 await using (var sizeCommand = db.CreateCommand())
                 {
@@ -152,31 +185,61 @@ internal static class AdminWorkloadTests
                 }
                 foreach (var workload in new[] { "insert", "update", "delete", "log-insert" })
                 {
-                    for (var sample = 0; sample < 6; sample++)
+                    foreach (var mode in new[] { "rollback", "commit" })
                     {
-                        await using var writeTransaction = await db.BeginTransactionAsync();
-                        transaction = writeTransaction;
-                        try
+                        for (var sample = 0; sample < 6; sample++)
                         {
-                            var sql = workload switch
+                            await using var writeTransaction = await db.BeginTransactionAsync();
+                            transaction = writeTransaction;
+                            var committed = false;
+                            try
                             {
-                                "log-insert" => $"INSERT INTO {logs} VALUES " + string.Join(',', Enumerable.Range(10001, 100).Select(i => $"('2026-02-01',{i},0)")),
-                                "insert" => $"INSERT INTO {table} VALUES " + string.Join(',', Enumerable.Range(10001, 100).Select(i => $"(1,{i},1,'2026-02-01',0)")),
-                                "update" => $"UPDATE {table} SET {Q("OwnerId")}={Q("OwnerId")}+1 WHERE {Q("TenantId")}=1",
-                                _ => $"DELETE FROM {table} WHERE {Q("TenantId")}=1"
-                            };
-                            var watch = Stopwatch.StartNew();
-                            await Execute(sql);
-                            watch.Stop();
-                            if (sample > 0)
-                            {
-                                writes.Add(new { Phase = phase, Workload = workload, Sample = sample, ClientMs = watch.Elapsed.TotalMilliseconds, RolledBack = true });
+                                var sql = workload switch
+                                {
+                                    "log-insert" => $"INSERT INTO {logs} VALUES " + string.Join(',', Enumerable.Range(10001, 100).Select(i => $"('2026-02-01',{i},0)")),
+                                    "insert" => $"INSERT INTO {table} VALUES " + string.Join(',', Enumerable.Range(10001, 100).Select(i => $"(1,{i},1,'2026-02-01',0)")),
+                                    "update" => $"UPDATE {table} SET {Q("OwnerId")}={Q("OwnerId")}+1 WHERE {Q("TenantId")}=1",
+                                    _ => $"DELETE FROM {table} WHERE {Q("TenantId")}=1"
+                                };
+                                var watch = Stopwatch.StartNew();
+                                await Execute(sql);
+                                if (mode == "commit")
+                                {
+                                    await writeTransaction.CommitAsync();
+                                    committed = true;
+                                }
+                                watch.Stop();
+                                if (sample > 0)
+                                {
+                                    writes.Add(new { Phase = phase, Workload = workload, Mode = mode, Sample = sample, ClientMs = watch.Elapsed.TotalMilliseconds, RolledBack = !committed });
+                                }
                             }
-                        }
-                        finally
-                        {
-                            await writeTransaction.RollbackAsync();
-                            transaction = null;
+                            finally
+                            {
+                                if (!committed)
+                                {
+                                    await writeTransaction.RollbackAsync();
+                                }
+                                transaction = null;
+                                if (committed)
+                                {
+                                    if (workload is "insert" or "log-insert")
+                                    {
+                                        await Execute($"DELETE FROM {(workload == "insert" ? table : logs)} WHERE {Q("RecordId")}>=10001");
+                                    }
+                                    else if (workload == "update")
+                                    {
+                                        await Execute($"UPDATE {table} SET {Q("OwnerId")}={Q("OwnerId")}-1 WHERE {Q("TenantId")}=1");
+                                    }
+                                    else
+                                    {
+                                        foreach (var batch in Enumerable.Range(1, 4000).Where(i => i % 4 == 0).Chunk(500))
+                                        {
+                                            await Execute($"INSERT INTO {table} VALUES " + string.Join(',', batch.Select(i => $"({i % 4 + 1},{i},{(i % 10 < 8 ? 1 : i % 19 + 2)},'2026-01-{i % 28 + 1:00}',{i % 31})")));
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -222,7 +285,7 @@ internal static class AdminWorkloadTests
                 }
             }
             var path = Path.Combine(AppContext.BaseDirectory, "admin-workload-" + dbms + ".json");
-            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { Dbms = dbms.ToString(), SyntheticOnly = true, SqlServerPlanIsEstimated = true, Reports = reports, Writes = writes, Sizes = sizes }, new JsonSerializerOptions { WriteIndented = true }));
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { Dbms = dbms.ToString(), SyntheticOnly = true, SqlServerPlanIsEstimated = true, Reports = reports, Writes = writes, Sizes = sizes, IndexSizes = indexSizes }, new JsonSerializerOptions { WriteIndented = true }));
             Console.WriteLine("Admin workload comparison saved: " + path);
         }
         finally

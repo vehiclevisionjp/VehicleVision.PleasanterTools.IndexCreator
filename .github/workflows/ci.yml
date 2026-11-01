@@ -61,6 +61,12 @@ jobs:
           global-json-file: global.json
       - run: dotnet restore --locked-mode
       - run: pwsh -File scripts/test.ps1 -Dbms ${{ matrix.dbms }} -Benchmark
+      - name: 管理系比較の合成データ計測を保存する
+        uses: actions/upload-artifact@v7
+        with:
+          name: admin-workload-${{ matrix.dbms }}
+          path: tests/IndexCreator.Tests/bin/Release/net10.0/admin-workload-${{ matrix.dbms }}.json
+          if-no-files-found: error
       - name: 検証コンテナの終了
         if: always()
         run: docker compose --profile '*' down -v
