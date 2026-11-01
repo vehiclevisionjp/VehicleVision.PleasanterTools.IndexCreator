@@ -18,6 +18,7 @@ internal static class AdminWorkloadTests
         var table = dialect.Table("AdminWorkloadFixture");
         var permissions = dialect.Table("AdminPermissionFixture");
         var members = dialect.Table("AdminMemberFixture");
+        var logs = dialect.Table("AdminLogFixture");
         DbTransaction? transaction = null;
         var ioMessages = new List<string>();
         if (db is Microsoft.Data.SqlClient.SqlConnection sqlConnection)
@@ -89,6 +90,9 @@ internal static class AdminWorkloadTests
         {
             await Execute($"CREATE TABLE {permissions} ({Q("ReferenceId")} bigint NOT NULL, {Q("SubjectId")} int NOT NULL, PRIMARY KEY ({Q("ReferenceId")},{Q("SubjectId")}))");
             await Execute($"CREATE TABLE {members} ({Q("GroupId")} int NOT NULL, {Q("UserId")} int NOT NULL, PRIMARY KEY ({Q("GroupId")},{Q("UserId")}))");
+            await Execute($"CREATE TABLE {logs} ({Q("CreatedTime")} {(dbms == Dbms.SQLServer ? "datetime2" : "timestamp")} NOT NULL, {Q("RecordId")} bigint NOT NULL, {Q("Kind")} int NOT NULL)");
+            await Execute($"CREATE INDEX {Q("admin_log_standard_id")} ON {logs} ({Q("RecordId")})");
+            await Execute($"CREATE UNIQUE INDEX {Q("admin_log_standard_time")} ON {logs} ({Q("CreatedTime")} DESC,{Q("RecordId")})");
             await Execute($"CREATE INDEX {Q("admin_member_standard_reverse")} ON {members} ({Q("UserId")},{Q("GroupId")})");
             await Execute($"INSERT INTO {members} VALUES " + string.Join(',', Enumerable.Range(1, 23).Select(i => $"({i},{i % 3 + 1})")));
             for (var batch = 0; batch < 8; batch++)
@@ -96,6 +100,7 @@ internal static class AdminWorkloadTests
                 var values = Enumerable.Range(batch * 500 + 1, 500).Select(i => $"({i % 4 + 1},{i},{(i % 10 < 8 ? 1 : i % 19 + 2)},'2026-01-{i % 28 + 1:00}',{i % 31})");
                 await Execute($"INSERT INTO {table} VALUES " + string.Join(',', values));
                 await Execute($"INSERT INTO {permissions} VALUES " + string.Join(',', Enumerable.Range(batch * 500 + 1, 500).Select(i => $"({i},{i % 23 + 1})")));
+                await Execute($"INSERT INTO {logs} VALUES " + string.Join(',', Enumerable.Range(batch * 500 + 1, 500).Select(i => $"('2026-01-{i % 28 + 1:00}',{i},{(i % 20 == 0 ? 7 : 0)})")));
             }
             var cases = new (string Name, string Where)[]
             {
@@ -108,7 +113,11 @@ internal static class AdminWorkloadTests
                 ("permission-subject", $"{Q("TenantId")}=1 AND {Q("RecordId")} IN (SELECT {Q("ReferenceId")} FROM {permissions} WHERE {Q("SubjectId")}=7)"),
                 ("parent", $"{Q("TenantId")}=1 AND {Q("ParentId")}=7"),
                 ("membership", $"{Q("TenantId")}=1 AND {Q("RecordId")} IN (SELECT {Q("ReferenceId")} FROM {permissions} p INNER JOIN {members} m ON p.{Q("SubjectId")}=m.{Q("GroupId")} WHERE m.{Q("UserId")}=2)"),
-                ("permission-empty", $"{Q("TenantId")}=1 AND {Q("RecordId")} IN (SELECT {Q("ReferenceId")} FROM {permissions} WHERE {Q("SubjectId")}=999)")
+                ("permission-empty", $"{Q("TenantId")}=1 AND {Q("RecordId")} IN (SELECT {Q("ReferenceId")} FROM {permissions} WHERE {Q("SubjectId")}=999)"),
+                ("log-period", $"{Q("CreatedTime")}>='2026-01-20'"),
+                ("log-common-kind", $"{Q("Kind")}=0 AND {Q("CreatedTime")}>='2026-01-20'"),
+                ("log-rare-kind", $"{Q("Kind")}=7 AND {Q("CreatedTime")}>='2026-01-20'"),
+                ("log-empty", $"{Q("Kind")}=999 AND {Q("CreatedTime")}>='2026-01-20'")
             };
             foreach (var phase in new[] { "standard", "candidate" })
             {
@@ -118,8 +127,9 @@ internal static class AdminWorkloadTests
                     await Execute($"CREATE INDEX {Q("admin_fixture_updated")} ON {table} ({Q("TenantId")},{Q("UpdatedTime")},{Q("RecordId")})");
                     await Execute($"CREATE INDEX {Q("admin_fixture_subject")} ON {permissions} ({Q("SubjectId")},{Q("ReferenceId")})");
                     await Execute($"CREATE INDEX {Q("admin_fixture_parent")} ON {table} ({Q("TenantId")},{Q("ParentId")},{Q("UpdatedTime")},{Q("RecordId")})");
+                    await Execute($"CREATE INDEX {Q("admin_log_candidate")} ON {logs} ({Q("Kind")},{Q("CreatedTime")} DESC,{Q("RecordId")})");
                 }
-                foreach (var fixture in new[] { table, permissions, members })
+                foreach (var fixture in new[] { table, permissions, members, logs })
                 {
                     await Execute(dbms switch
                     {
@@ -132,15 +142,15 @@ internal static class AdminWorkloadTests
                 {
                     sizeCommand.CommandText = dbms switch
                     {
-                        Dbms.SQLServer => $"SELECT SUM(used_page_count)*8192 FROM sys.dm_db_partition_stats WHERE object_id IN (OBJECT_ID(N'{table}'),OBJECT_ID(N'{permissions}'),OBJECT_ID(N'{members}'))",
-                        Dbms.PostgreSQL => $"SELECT pg_total_relation_size('{table}')+pg_total_relation_size('{permissions}')+pg_total_relation_size('{members}')",
-                        _ => "SELECT SUM(DATA_LENGTH+INDEX_LENGTH) FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('AdminWorkloadFixture','AdminPermissionFixture','AdminMemberFixture')"
+                        Dbms.SQLServer => $"SELECT SUM(used_page_count)*8192 FROM sys.dm_db_partition_stats WHERE object_id IN (OBJECT_ID(N'{table}'),OBJECT_ID(N'{permissions}'),OBJECT_ID(N'{members}'),OBJECT_ID(N'{logs}'))",
+                        Dbms.PostgreSQL => $"SELECT pg_total_relation_size('{table}')+pg_total_relation_size('{permissions}')+pg_total_relation_size('{members}')+pg_total_relation_size('{logs}')",
+                        _ => "SELECT SUM(DATA_LENGTH+INDEX_LENGTH) FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('AdminWorkloadFixture','AdminPermissionFixture','AdminMemberFixture','AdminLogFixture')"
                     };
                     var bytes = Convert.ToInt64(await sizeCommand.ExecuteScalarAsync());
                     check(bytes > 0, "Admin fixture storage is reported on " + dbms);
                     sizes.Add(new { Phase = phase, TotalTableAndIndexBytes = bytes, MysqlSizeIsEstimate = dbms == Dbms.MySQL });
                 }
-                foreach (var workload in new[] { "insert", "update", "delete" })
+                foreach (var workload in new[] { "insert", "update", "delete", "log-insert" })
                 {
                     for (var sample = 0; sample < 6; sample++)
                     {
@@ -150,6 +160,7 @@ internal static class AdminWorkloadTests
                         {
                             var sql = workload switch
                             {
+                                "log-insert" => $"INSERT INTO {logs} VALUES " + string.Join(',', Enumerable.Range(10001, 100).Select(i => $"('2026-02-01',{i},0)")),
                                 "insert" => $"INSERT INTO {table} VALUES " + string.Join(',', Enumerable.Range(10001, 100).Select(i => $"(1,{i},1,'2026-02-01',0)")),
                                 "update" => $"UPDATE {table} SET {Q("OwnerId")}={Q("OwnerId")}+1 WHERE {Q("TenantId")}=1",
                                 _ => $"DELETE FROM {table} WHERE {Q("TenantId")}=1"
@@ -175,10 +186,20 @@ internal static class AdminWorkloadTests
                 }
                 foreach (var item in cases)
                 {
-                    var sql = $"SELECT {Q("RecordId")} FROM {table} WHERE {item.Where} ORDER BY {Q("UpdatedTime")},{Q("RecordId")}";
+                    var isLog = item.Name.StartsWith("log-", StringComparison.Ordinal);
+                    var sql = isLog
+                        ? $"SELECT {Q("RecordId")} FROM {logs} WHERE {item.Where} ORDER BY {Q("CreatedTime")} DESC,{Q("RecordId")}"
+                        : $"SELECT {Q("RecordId")} FROM {table} WHERE {item.Where} ORDER BY {Q("UpdatedTime")},{Q("RecordId")}";
                     var warmup = await Read(sql);
                     check(item.Name.EndsWith("empty", StringComparison.Ordinal) ? warmup.Rows.Length == 0 : warmup.Rows.Length > 0, "Admin case has expected empty/nonempty result: " + item.Name);
-                    check(warmup.Rows.All(id => id % 4 + 1 == (item.Name == "other-tenant" ? 4 : 1)), "Admin tenant isolation: " + item.Name);
+                    check(isLog || warmup.Rows.All(id => id % 4 + 1 == (item.Name == "other-tenant" ? 4 : 1)), "Admin tenant isolation: " + item.Name);
+                    if (isLog)
+                    {
+                        var expected = Enumerable.Range(1, 4000).Where(id => id % 28 + 1 >= 20
+                            && (item.Name == "log-period" || item.Name == "log-common-kind" && id % 20 != 0 || item.Name == "log-rare-kind" && id % 20 == 0))
+                            .OrderByDescending(id => id % 28 + 1).ThenBy(id => id).Select(id => (long)id);
+                        check(warmup.Rows.SequenceEqual(expected), "Log results match independent synthetic oracle: " + item.Name);
+                    }
                     if (phase == "standard")
                     {
                         baseline[item.Name] = warmup.Rows;
@@ -209,6 +230,7 @@ internal static class AdminWorkloadTests
             await Execute("DROP TABLE " + table);
             await Execute("DROP TABLE " + permissions);
             await Execute("DROP TABLE " + members);
+            await Execute("DROP TABLE " + logs);
         }
     }
 }
