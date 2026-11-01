@@ -418,6 +418,7 @@ if (args.Contains("--integration"))
     }
     // 本体の MySQL は utf8mb4_general_ci で DB を作る（Definitions/Sqls/MySQL/CreateDatabase.sql）。
     await AdminWorkloadTests.Run(dbms, cs, d, Check);
+    await AdminDirectoryWorkloadTests.Run(dbms, cs, d, Check);
     await GanttWorkloadTests.Run(dbms, cs, d, Check);
     await PeriodCalendarWorkloadTests.Run(dbms, cs, d, Check);
     await PermissionWorkloadTests.Run(dbms, cs, d, Check);
