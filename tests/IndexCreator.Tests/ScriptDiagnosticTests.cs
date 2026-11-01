@@ -7,6 +7,16 @@ internal static class ScriptDiagnosticTests
     {
         foreach (var db in Enum.GetValues<Dbms>())
         {
+            foreach (var origin in new[] { "file", "table" })
+            {
+                var site = ScriptExtensionTests.MutationSite("items.Get(1,JSON.stringify({View:{ColumnFilterHash:{Status:'100'}}}));");
+                var extension = ExtensionInventory.Normalize(origin, "ServerScript", Json.Parse("""{"SiteIdList":[1],"WhenViewProcessing":true}"""), site.SiteSettings.Get("ServerScripts").Array().First().Get("Body").Text());
+                var inspection = ExtensionInventory.Inspect([site], [extension]);
+                check(inspection.UncertainSites.Contains(site.SiteId), "Extension scope stays uncertain on " + db + origin);
+                check(ScriptQueryPlanner.Analyze([site], db, externalSites: inspection.UncertainSites).Indexes.Count == 0, "Fixed extension query is not promoted on " + db + origin);
+                var disabled = extension with { Settings = Json.Parse("""{"Disabled":true,"SiteIdList":[1]}""") };
+                check(ExtensionInventory.Inspect([site], [disabled]).UncertainSites.Count == 0, "Disabled extension leaves uncertainty on " + db + origin);
+            }
             var cases = new[]
             {
                 ("view.Filters.Status=context.Value;", "unresolved-value", "#1"),
