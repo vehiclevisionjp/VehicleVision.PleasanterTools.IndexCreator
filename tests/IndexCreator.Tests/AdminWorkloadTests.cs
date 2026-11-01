@@ -19,6 +19,11 @@ internal static class AdminWorkloadTests
         var permissions = dialect.Table("AdminPermissionFixture");
         var members = dialect.Table("AdminMemberFixture");
         DbTransaction? transaction = null;
+        var ioMessages = new List<string>();
+        if (db is Microsoft.Data.SqlClient.SqlConnection sqlConnection)
+        {
+            sqlConnection.InfoMessage += (_, message) => ioMessages.Add(message.Message);
+        }
         async Task Execute(string sql)
         {
             await using var command = db.CreateCommand();
@@ -27,8 +32,9 @@ internal static class AdminWorkloadTests
             command.CommandTimeout = 60;
             await command.ExecuteNonQueryAsync();
         }
-        async Task<(long[] Rows, double Ms)> Read(string sql)
+        async Task<(long[] Rows, double Ms, string[] Io)> Read(string sql)
         {
+            ioMessages.Clear();
             await using var command = db.CreateCommand();
             command.CommandText = sql;
             command.CommandTimeout = 30;
@@ -39,7 +45,8 @@ internal static class AdminWorkloadTests
             {
                 rows.Add(Convert.ToInt64(reader.GetValue(0)));
             }
-            return (rows.ToArray(), watch.Elapsed.TotalMilliseconds);
+            while (await reader.NextResultAsync()) { }
+            return (rows.ToArray(), watch.Elapsed.TotalMilliseconds, ioMessages.ToArray());
         }
         async Task<string> Plan(string sql)
         {
@@ -75,6 +82,7 @@ internal static class AdminWorkloadTests
         }
         var reports = new List<object>();
         var writes = new List<object>();
+        var sizes = new List<object>();
         var baseline = new Dictionary<string, long[]>();
         await Execute($"CREATE TABLE {table} ({Q("TenantId")} int NOT NULL, {Q("RecordId")} bigint NOT NULL, {Q("OwnerId")} int NOT NULL, {Q("UpdatedTime")} {(dbms == Dbms.SQLServer ? "datetime2" : "timestamp")} NOT NULL, {Q("ParentId")} int NOT NULL, PRIMARY KEY ({Q("TenantId")},{Q("RecordId")}))");
         try
@@ -111,28 +119,59 @@ internal static class AdminWorkloadTests
                     await Execute($"CREATE INDEX {Q("admin_fixture_subject")} ON {permissions} ({Q("SubjectId")},{Q("ReferenceId")})");
                     await Execute($"CREATE INDEX {Q("admin_fixture_parent")} ON {table} ({Q("TenantId")},{Q("ParentId")},{Q("UpdatedTime")},{Q("RecordId")})");
                 }
+                foreach (var fixture in new[] { table, permissions, members })
+                {
+                    await Execute(dbms switch
+                    {
+                        Dbms.SQLServer => $"UPDATE STATISTICS {fixture} WITH FULLSCAN",
+                        Dbms.PostgreSQL => "ANALYZE " + fixture,
+                        _ => "ANALYZE TABLE " + fixture
+                    });
+                }
+                await using (var sizeCommand = db.CreateCommand())
+                {
+                    sizeCommand.CommandText = dbms switch
+                    {
+                        Dbms.SQLServer => $"SELECT SUM(used_page_count)*8192 FROM sys.dm_db_partition_stats WHERE object_id IN (OBJECT_ID(N'{table}'),OBJECT_ID(N'{permissions}'),OBJECT_ID(N'{members}'))",
+                        Dbms.PostgreSQL => $"SELECT pg_total_relation_size('{table}')+pg_total_relation_size('{permissions}')+pg_total_relation_size('{members}')",
+                        _ => "SELECT SUM(DATA_LENGTH+INDEX_LENGTH) FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('AdminWorkloadFixture','AdminPermissionFixture','AdminMemberFixture')"
+                    };
+                    var bytes = Convert.ToInt64(await sizeCommand.ExecuteScalarAsync());
+                    check(bytes > 0, "Admin fixture storage is reported on " + dbms);
+                    sizes.Add(new { Phase = phase, TotalTableAndIndexBytes = bytes, MysqlSizeIsEstimate = dbms == Dbms.MySQL });
+                }
                 foreach (var workload in new[] { "insert", "update", "delete" })
                 {
-                    await using var writeTransaction = await db.BeginTransactionAsync();
-                    transaction = writeTransaction;
-                    try
+                    for (var sample = 0; sample < 6; sample++)
                     {
-                        var sql = workload switch
+                        await using var writeTransaction = await db.BeginTransactionAsync();
+                        transaction = writeTransaction;
+                        try
                         {
-                            "insert" => $"INSERT INTO {table} VALUES " + string.Join(',', Enumerable.Range(10001, 100).Select(i => $"(1,{i},1,'2026-02-01',0)")),
-                            "update" => $"UPDATE {table} SET {Q("OwnerId")}={Q("OwnerId")}+1 WHERE {Q("TenantId")}=1",
-                            _ => $"DELETE FROM {table} WHERE {Q("TenantId")}=1"
-                        };
-                        var watch = Stopwatch.StartNew();
-                        await Execute(sql);
-                        watch.Stop();
-                        writes.Add(new { Phase = phase, Workload = workload, ClientMs = watch.Elapsed.TotalMilliseconds, RolledBack = true });
+                            var sql = workload switch
+                            {
+                                "insert" => $"INSERT INTO {table} VALUES " + string.Join(',', Enumerable.Range(10001, 100).Select(i => $"(1,{i},1,'2026-02-01',0)")),
+                                "update" => $"UPDATE {table} SET {Q("OwnerId")}={Q("OwnerId")}+1 WHERE {Q("TenantId")}=1",
+                                _ => $"DELETE FROM {table} WHERE {Q("TenantId")}=1"
+                            };
+                            var watch = Stopwatch.StartNew();
+                            await Execute(sql);
+                            watch.Stop();
+                            if (sample > 0)
+                            {
+                                writes.Add(new { Phase = phase, Workload = workload, Sample = sample, ClientMs = watch.Elapsed.TotalMilliseconds, RolledBack = true });
+                            }
+                        }
+                        finally
+                        {
+                            await writeTransaction.RollbackAsync();
+                            transaction = null;
+                        }
                     }
-                    finally
-                    {
-                        await writeTransaction.RollbackAsync();
-                        transaction = null;
-                    }
+                }
+                if (dbms == Dbms.SQLServer)
+                {
+                    await Execute("SET STATISTICS IO ON");
                 }
                 foreach (var item in cases)
                 {
@@ -153,11 +192,16 @@ internal static class AdminWorkloadTests
                         times.Add(observed.Ms);
                     }
                     times.Sort();
-                    reports.Add(new { Phase = phase, Case = item.Name, Rows = warmup.Rows.Length, MedianClientMs = times[2], SamplesMs = times, Plan = await Plan(sql) });
+                    check(dbms != Dbms.SQLServer || warmup.Io.Length > 0, "SQL Server runtime IO is captured");
+                    reports.Add(new { Phase = phase, Case = item.Name, Rows = warmup.Rows.Length, MedianClientMs = times[2], SamplesMs = times, SqlServerRuntimeIo = warmup.Io, Plan = await Plan(sql) });
+                }
+                if (dbms == Dbms.SQLServer)
+                {
+                    await Execute("SET STATISTICS IO OFF");
                 }
             }
             var path = Path.Combine(AppContext.BaseDirectory, "admin-workload-" + dbms + ".json");
-            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { Dbms = dbms.ToString(), SyntheticOnly = true, SqlServerPlanIsEstimated = true, Reports = reports, Writes = writes }, new JsonSerializerOptions { WriteIndented = true }));
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { Dbms = dbms.ToString(), SyntheticOnly = true, SqlServerPlanIsEstimated = true, Reports = reports, Writes = writes, Sizes = sizes }, new JsonSerializerOptions { WriteIndented = true }));
             Console.WriteLine("Admin workload comparison saved: " + path);
         }
         finally
