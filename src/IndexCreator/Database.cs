@@ -108,7 +108,7 @@ public sealed partial class Database : IAsyncDisposable
                 FROM sys.indexes i JOIN sys.tables t ON t.object_id=i.object_id
                 JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal>0
                 JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
-                WHERE SCHEMA_NAME(t.schema_id)=@schema AND t.name IN ('Results','Issues','Wikis','Items')
+                WHERE SCHEMA_NAME(t.schema_id)=@schema AND t.name IN ('Results','Issues','Wikis','Items','Sites')
                 ORDER BY t.name, i.name, ic.key_ordinal
                 """,
             Dbms.PostgreSQL => """
@@ -121,13 +121,13 @@ public sealed partial class Database : IAsyncDisposable
                 CROSS JOIN LATERAL unnest(x.indkey::int2[]) WITH ORDINALITY k(attnum,ord)
                 LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum
                 JOIN pg_opclass op ON op.oid=x.indclass[k.ord-1]
-                WHERE n.nspname=@schema AND t.relname IN ('Results','Issues','Wikis','Items') AND k.ord<=x.indnkeyatts
+                WHERE n.nspname=@schema AND t.relname IN ('Results','Issues','Wikis','Items','Sites') AND k.ord<=x.indnkeyatts
                 ORDER BY t.relname, i.relname, k.ord
                 """,
             _ => """
                 SELECT TABLE_NAME, INDEX_NAME, COALESCE(COLUMN_NAME,''), COALESCE(COLLATION='D',FALSE), COALESCE(SUB_PART,0), '', IS_VISIBLE='YES', INDEX_TYPE='BTREE' AND COLUMN_NAME IS NOT NULL
                 FROM information_schema.STATISTICS
-                WHERE TABLE_SCHEMA=@schema AND TABLE_NAME IN ('Results','Issues','Wikis','Items')
+                WHERE TABLE_SCHEMA=@schema AND TABLE_NAME IN ('Results','Issues','Wikis','Items','Sites')
                 ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
                 """
         };
@@ -152,7 +152,7 @@ public sealed partial class Database : IAsyncDisposable
     }
     public async Task ValidateColumns(IReadOnlyList<IndexSpec> specs, CancellationToken ct)
     {
-        await using var cmd = Command("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@schema AND TABLE_NAME IN ('Results','Issues','Wikis','Items')");
+        await using var cmd = Command("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@schema AND TABLE_NAME IN ('Results','Issues','Wikis','Items','Sites')");
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         var columns = new HashSet<(string, string)>();
         while (await reader.ReadAsync(ct))

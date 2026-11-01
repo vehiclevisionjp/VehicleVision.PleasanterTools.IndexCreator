@@ -38,6 +38,7 @@ public static class Program
                       /min-records <count>        Minimum records per site (default: 10000)
                       /mysql-prefix <1..191>      TEXT prefix length (default: 100)
                       /include-filter-columns     Include filter controls
+                      /include-site-delta         Include the shared Sites(TenantId,UpdatedTime) index
                       /include-script-queries     Plan resolved script queries for review (plan only; no prune)
                       /extension-path <Parameters> Inspect extension files recursively
                       /extensions-table           Inspect the live Extensions table
@@ -50,6 +51,7 @@ public static class Program
                       /output <plan.sql>          Export the inspected operation plan
                     Default layout: IndexCreator beside Implem.CodeDefiner and Implem.Pleasanter.
                     Only IX_vvplic_<Results|Issues|Wikis>_<id>_<purpose>_<16 hex digits> indexes are managed.
+                    With /include-site-delta, IX_vvplic_Sites_0_TenantId_<16 hex digits> is also managed.
                     """);
                 return 0;
             }
@@ -113,6 +115,11 @@ public static class Program
                     analysis.Diagnostics.Concat(scripts.Diagnostics).Concat(mutations.Diagnostics).Concat(inspection.Diagnostics).ToArray()), sites);
                 RuntimeLog.WriteLine(ExtensionInventory.DescribeInputs(options.ExtensionPath != null, options.ExtensionsTable, extensions));
             }
+            if (options.IncludeSiteDelta)
+            {
+                analysis = new(analysis.Indexes.Append(SiteDeltaPlanner.Candidate).ToArray(), analysis.Diagnostics);
+            }
+            existing = SiteDeltaPlanner.Scope(existing, options.IncludeSiteDelta);
             if (database != null)
             {
                 await database.ValidateColumns(analysis.Indexes, cancel.Token);
