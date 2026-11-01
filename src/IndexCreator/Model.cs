@@ -26,7 +26,9 @@ public sealed record IndexSpec(string Table, IReadOnlyList<Key> Keys, long SiteI
         }
     }
     public bool Covers(IndexSpec other) => Table == other.Table && Keys.Count >= other.Keys.Count && Keys.Take(other.Keys.Count).SequenceEqual(other.Keys);
-    public static bool IsManaged(string table, string name) => table is "Results" or "Issues" or "Wikis" && name.Length <= 63 && Regex.IsMatch(name, "^" + Prefix + Regex.Escape(table) + "_[1-9][0-9]{0,18}_[A-Za-z0-9]+_[0-9a-f]{16}$", RegexOptions.CultureInvariant);
+    public static bool IsManaged(string table, string name) => name.Length <= 63 &&
+        (table == "Sites" ? Regex.IsMatch(name, "^" + Prefix + "Sites_0_TenantId_[0-9a-f]{16}$", RegexOptions.CultureInvariant)
+        : table is "Results" or "Issues" or "Wikis" && Regex.IsMatch(name, "^" + Prefix + Regex.Escape(table) + "_[1-9][0-9]{0,18}_[A-Za-z0-9]+_[0-9a-f]{16}$", RegexOptions.CultureInvariant));
 }
 public sealed record ExistingIndex(string Table, string Name, IReadOnlyList<Key> Keys, bool Valid = true, bool Plain = true)
 {

@@ -22,6 +22,17 @@ void Reject(Action action, string name)
 Site SiteWith(string settings, long count = 20000, string table = "Results") => new(1, table, Json.Parse(settings), count);
 ScriptExtensionTests.Run(Check, Reject);
 CalendarTests.Run(Check);
+var deltaSpec = SiteDeltaPlanner.Candidate;
+Check(IndexSpec.IsManaged("Sites", deltaSpec.Name), "Shared delta index has a dedicated managed namespace");
+Check(!IndexSpec.IsManaged("Sites", "IX_vvplic_Sites_1_TenantId_0123456789abcdef"), "Sites indexes are not record-site managed indexes");
+Check(Options.Parse(["plan", "/include-site-delta"]).IncludeSiteDelta, "Delta planning requires explicit flag");
+Check(!Options.Parse(["plan"]).IncludeSiteDelta, "Delta is opt-in");
+Reject(() => Options.Parse(["views", "/include-site-delta"]), "Delta is not a view option");
+Reject(() => Options.Parse(["plan", "/sites", "synthetic.json", "/include-site-delta"]), "Delta requires live schema validation");
+var existingDelta = new ExistingIndex("Sites", deltaSpec.Name, deltaSpec.Keys);
+Check(Reconciler.Plan([], SiteDeltaPlanner.Scope([existingDelta], false), true).Count == 0, "Default prune never drops shared Sites index");
+Check(Reconciler.Plan([deltaSpec], [new("Sites", "custom_delta", deltaSpec.Keys)], true).Single().Kind == ChangeKind.Keep, "Custom delta covering index is reused");
+Reject(() => Reconciler.Plan([deltaSpec], [existingDelta with { Keys = [new("UpdatedTime"), new("TenantId")] }], false), "Delta name conflicts fail closed");
 Analysis Plan(Dbms db, string settings) => new Planner(db).Analyze([SiteWith(settings)]);
 IReadOnlyList<Diagnostic> ScriptNotes(string body, bool disabled = false) => ServerScriptDiagnostics.Analyze([SiteWith(System.Text.Json.JsonSerializer.Serialize(new { ServerScripts = new[] { new { Body = body, Disabled = disabled } } }))]);
 Check(ScriptNotes("// items.Get(1)\nconst text='view.Filters.ClassA=1';").Count == 0, "Script comments and strings are not calls");
@@ -430,6 +441,23 @@ if (args.Contains("--integration"))
         await database.Execute($"CREATE INDEX {d.Quote("standard_" + table)} ON {d.Table(table)} ({d.Quote(table[..^1] + "Id")})");
     }
     await database.AcquireLock(default);
+    try
+    {
+        await database.ValidateColumns([SiteDeltaPlanner.Candidate], default);
+        Check(false, "Delta missing columns must stop");
+    }
+    catch (UserError)
+    {
+        Check(true, "Delta missing columns stop on " + dbms);
+    }
+    await database.Execute($"ALTER TABLE {d.Table("Sites")} ADD {d.Quote("TenantId")} int NOT NULL DEFAULT 1");
+    await database.Execute($"ALTER TABLE {d.Table("Sites")} ADD {d.Quote("UpdatedTime")} {(dbms == Dbms.SQLServer ? "datetime2" : "timestamp")} NULL");
+    await database.ValidateColumns([SiteDeltaPlanner.Candidate], default);
+    await database.Apply(Reconciler.Plan([SiteDeltaPlanner.Candidate], await database.ReadIndexes(default), false), default);
+    var deltaCatalog = await database.ReadIndexes(default);
+    Check(Reconciler.Plan([SiteDeltaPlanner.Candidate], deltaCatalog, false).Single().Kind == ChangeKind.Keep, "Shared delta roundtrip on " + dbms);
+    Check(!Reconciler.Plan([], SiteDeltaPlanner.Scope(deltaCatalog, false), true).Any(c => c.Spec.Table == "Sites"), "Ordinary prune excludes delta on " + dbms);
+    await database.Execute(d.Drop("Sites", SiteDeltaPlanner.Candidate.Name));
     await using (var second = new Database(configuration))
     {
         await second.Open(default);
