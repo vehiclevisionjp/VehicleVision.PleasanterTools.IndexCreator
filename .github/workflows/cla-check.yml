@@ -1,4 +1,4 @@
-# Template の方式。PR のコードは実行せず、base 側の署名一覧だけを見る。
+# Questionnaire の方式。PR のコードは実行せず、base 側の署名一覧だけを見る。
 # 外部の CLA サービスへ作者の情報を渡さない。
 name: CLA Check
 
@@ -20,6 +20,7 @@ concurrency:
 jobs:
   cla:
     name: cla
+    # internal の Template 自身は対象外。新しい公開リポジトリではそのまま動く。
     if: github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -38,7 +39,7 @@ jobs:
           set -euo pipefail
           list='.github/cla/signed.yml'
           if [ ! -f "$list" ]; then
-            echo "::error title=Missing CLA signatory list::$list was not found."
+            echo "::error title=署名の一覧が無い::$list が見つかりません"
             exit 1
           fi
 
@@ -46,19 +47,19 @@ jobs:
           case "$AUTHOR" in
             'dependabot[bot]' | 'github-actions[bot]' | 'my-repo-automation-bot[bot]')
               echo 'signed=true' >> "$GITHUB_OUTPUT"
-              echo "$AUTHOR is an exempt automation bot."
+              echo "$AUTHOR は bot なので CLA の確認を省きます。"
               exit 0
               ;;
           esac
 
           if grep -Eq "^[[:space:]]*-[[:space:]]*login:[[:space:]]*${AUTHOR}[[:space:]]*$" "$list"; then
             echo 'signed=true' >> "$GITHUB_OUTPUT"
-            echo 'CLA signature confirmed.'
+            echo '署名を確認しました。'
             exit 0
           fi
 
           echo 'signed=false' >> "$GITHUB_OUTPUT"
-          echo "::error title=CLA signature required::$AUTHOR is not in the signatory list. See the CLA signing section in CONTRIBUTING.md."
+          echo "::error title=CLA が未署名です::$AUTHOR は署名の一覧にありません。CONTRIBUTING.md の「CLA へ署名する」を見てください。"
           exit 1
 
       - name: 未署名なら案内する
@@ -83,7 +84,7 @@ jobs:
               body:
                 `${marker}\n@${author} さん、貢献をありがとうございます。\n\n` +
                 '**取り込む前に CLA への署名をお願いします。**\n\n' +
-                '将来の商用提供も含め、貢献を再許諾する権利を確認するためです。\n\n' +
+                'AGPL と商用のデュアルライセンスで提供するため、貢献を再許諾する権利を確認するためです。\n\n' +
                 '1. [CLA.md](../blob/develop/CLA.md) を読む\n' +
                 '2. 「CLA への署名」の Issue を立てる\n' +
                 '3. 管理者が確認して署名一覧へ追記します\n\n' +
