@@ -40,7 +40,7 @@ public static class Program
                       /include-filter-columns     Include filter controls
                       /include-site-delta         Include the shared Sites(TenantId,UpdatedTime) index
                       /include-period-calendars   Review interval Calendar branch candidates (plan only)
-                      /include-dashboard-calendars Review saved single-target Dashboard Calendars (live plan only)
+                      /include-dashboard-calendars Review common keys across saved Dashboard Calendar targets (live plan only)
                       /include-script-queries     Plan resolved script queries for review (plan only; no prune)
                       /extension-path <Parameters> Inspect extension files recursively
                       /extensions-table           Inspect the live Extensions table
