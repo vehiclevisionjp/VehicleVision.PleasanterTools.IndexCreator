@@ -11,6 +11,11 @@ internal static class CalendarTests
                 Site Make(string view, string extra = "") => new(42, table, Json.Parse("{\"Views\":[" + view + "]" + extra + "}"), 20000);
                 const string view = """{"DefaultMode":"Calendar","CalendarFromTo":"DateA","ColumnFilterHash":{"Manager":"1"}}""";
                 var site = Make(view);
+                var intervalSite = Make("""{"DefaultMode":"Calendar","CalendarFromTo":"DateA-DateB","ColumnFilterHash":{"Manager":"1"}}""");
+                var intervals = new Planner(db, includePeriodCalendars: true).Analyze([intervalSite]);
+                check(intervals.Indexes.Count(i => i.Keys.Last().Column is "DateA" or "DateB") == 2, "Interval review generates separate branch keys on " + db);
+                check(intervals.Diagnostics.Any(d => d.Message.Contains("full overlap predicate")), "Interval does not claim full OR coverage on " + db);
+                check(!new Planner(db, includePeriodCalendars: true).AnalyzeQuery(intervalSite, intervalSite.SiteSettings.Get("Views").Array().First()).Indexes.Any(i => i.Keys.Last().Column is "DateA" or "DateB"), "Interval metadata never changes general API on " + db);
                 check(new Planner(db).Analyze([site]).Indexes.Any(i => i.Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Manager", "DateA"])), "Calendar equality prefix on " + db + table);
                 check(!new Planner(db).AnalyzeQuery(site, Json.Parse(view)).Indexes.Any(i => i.Keys.Last().Column == "DateA"), "Calendar does not affect general query on " + db + table);
                 foreach (var column in new[] { "", "StartTime-CompletionTime", "ClassA", "DateA~1", "Unknown" })

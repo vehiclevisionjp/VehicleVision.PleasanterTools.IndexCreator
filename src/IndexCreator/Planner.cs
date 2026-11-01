@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace VehicleVision.PleasanterTools.IndexCreator;
 
-public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilterColumns = false, int mysqlPrefix = 100)
+public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilterColumns = false, int mysqlPrefix = 100, bool includePeriodCalendars = false)
 {
     private readonly List<IndexSpec> indexes = [];
     private readonly List<Diagnostic> diagnostics = [];
@@ -166,8 +166,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
             foreach (var v in s.SiteSettings.Get("Views").Array())
             {
                 AnalyzeView(s, v, links);
-                var calendar = CalendarColumn(s, v, links);
-                if (calendar != null)
+                foreach (var calendar in CalendarColumns(s, v, links))
                 {
                     AnalyzeView(s, v, links, calendarColumn: calendar);
                 }
@@ -266,22 +265,29 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
             }
         }
     }
-    private string? CalendarColumn(Site s, JsonElement view, HashSet<string> links)
+    private IReadOnlyList<string> CalendarColumns(Site s, JsonElement view, HashSet<string> links)
     {
         if (view.Get("DefaultMode").Text() != "Calendar")
         {
-            return null;
+            return [];
         }
         var name = view.Get("CalendarFromTo").Text();
+        var columns = name.Split('-');
         if (s.ReferenceType is not ("Results" or "Issues") || s.SiteSettings.Get("DashboardParts").Array().Any()
             || s.SiteSettings.Get("ServerScripts").Array().Any(x => !x.Get("Disabled").Bool())
-            || ColumnKind(name) != Kind.Date || links.Contains(name))
+            || columns.Length is < 1 or > 2 || columns.Any(c => ColumnKind(c) != Kind.Date || links.Contains(c))
+            || columns.Length == 2 && !includePeriodCalendars)
         {
             Note(s, "Calendar period planning requires an explicit single physical date column without dashboard or active server scripts; no calendar candidate generated.");
-            return null;
+            return [];
+        }
+        if (columns.Length == 2)
+        {
+            Note(s, "Calendar interval OR branch candidates are for plan review only; neither index guarantees coverage or improvement of the full overlap predicate.");
+            return columns.Distinct(StringComparer.Ordinal).ToArray();
         }
         Note(s, "Calendar single-date range candidate generated; interval calendars and Gantt expressions are not covered.");
-        return name;
+        return [name];
     }
     private void AnalyzeView(Site s, JsonElement view, HashSet<string> links, bool choiceLookup = false, string? calendarColumn = null)
     {
