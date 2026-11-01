@@ -50,6 +50,19 @@ internal static class ScriptDiagnosticTests
 
             var query = ScriptExtensionTests.MutationSite("items.Get(1,JSON.stringify({View:{ColumnFilterHash:{Status:'100'}}})); unknown();");
             var queryPlan = ScriptQueryPlanner.Analyze([query], db);
+            const string first = "items.Get(1,JSON.stringify({View:{ColumnFilterHash:{Status:'100'}}}));";
+            const string second = "items.Get(1,JSON.stringify({View:{ColumnFilterHash:{CheckB:'true'}}}));";
+            foreach (var body in new[] { first + second, first + "unknown();" + second,
+                first + "data.View={};" + second, "try {" + first + second + "} catch(e) {" + second + "} finally {" + second + "}" })
+            {
+                var multiple = ScriptQueryPlanner.Analyze([ScriptExtensionTests.MutationSite(body)], db);
+                check(multiple.Indexes.Select(i => i.Signature).Order().SequenceEqual(queryPlan.Indexes.Select(i => i.Signature).Order()), "Later Get never becomes a proven candidate on " + db);
+                check(multiple.Diagnostics.Any(n => n.Message.Contains("first-query-only") && n.Message.Contains("not covered")), "Multiple Get keeps explicit coverage limit on " + db);
+            }
+            foreach (var prefix in new[] { "unknown();", "if(context.Flag){unknown();}", "data.View={};" })
+            {
+                check(ScriptQueryPlanner.Analyze([ScriptExtensionTests.MutationSite(prefix + first + second)], db).Indexes.Count == 0, "Unknown effects before first Get reject candidates on " + db);
+            }
             check(queryPlan.Indexes.Count > 0 && queryPlan.Diagnostics.Any(n => n.Message.Contains("first-query-only") && n.Message.Contains("prefix statement #1") && n.Message.Contains("not covered")), "Query coverage stops at first Get on " + db);
             check(ScriptQueryPlanner.Analyze([query], db, minRecords: long.MaxValue).Diagnostics.Any(n => n.Message.Contains("resolved-no-candidates")), "Resolved query with no candidates distinct on " + db);
             check(ScriptQueryPlanner.Analyze([ScriptExtensionTests.MutationSite("const x='100';")], db).Diagnostics.Any(n => n.Message.Contains("resolved-no-query")), "No query in supported declarations is not unresolved on " + db);
