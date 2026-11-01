@@ -37,23 +37,43 @@ public static class DashboardCalendarPlanner
                         throw new UserError("Dashboard Calendar metadata has an invalid shape.");
                     }
                 }
-                var selector = part.Get("CalendarSites").Text().Trim();
-                if (!long.TryParse(selector, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0)
+                var tokens = part.Get("CalendarSites").Text().Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
+                var ids = new List<long>();
+                var invalid = tokens.Length == 0;
+                foreach (var token in tokens)
                 {
-                    notes.Add(new(source.SiteId, origin + "target is not one explicit numeric site; no candidate generated."));
+                    if (!long.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0) { invalid = true; }
+                    else { ids.Add(id); }
+                }
+                if (invalid)
+                {
+                    notes.Add(new(source.SiteId, origin + "targets are not explicit positive numeric sites; no candidate generated."));
                     continue;
                 }
                 var data = part.Get("CalendarSitesData");
                 if (data.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)
-                    && (data.ValueKind != JsonValueKind.Array || data.Array().Count() != 1 || data.Array().Any(x => !long.TryParse(x.Text(), NumberStyles.None, CultureInfo.InvariantCulture, out var other) || other != id)))
+                    && (data.ValueKind != JsonValueKind.Array || data.Array().Count() != ids.Count
+                        || data.Array().Select((x, n) => long.TryParse(x.Text(), NumberStyles.None, CultureInfo.InvariantCulture, out var other) && other == ids[n]).Any(matches => !matches)))
                 {
                     notes.Add(new(source.SiteId, origin + "conflicting target metadata; no candidate generated."));
                     continue;
                 }
-                if (!targets.TryGetValue(id, out var target) || target.ReferenceType is not ("Results" or "Issues")
-                    || Active(target) || uncertain?.Contains(id) == true)
+                var selected = ids.Distinct().Select(id => targets.GetValueOrDefault(id)).ToArray();
+                if (selected.Any(s => s == null || s.ReferenceType is not ("Results" or "Issues")))
                 {
-                    notes.Add(new(source.SiteId, origin + "target unavailable or runtime scripts/extensions unresolved; no candidate generated."));
+                    notes.Add(new(source.SiteId, origin + "a target is unavailable or not a record table; no candidate generated for this part."));
+                    continue;
+                }
+                var bases = selected.Select(s => s!).ToArray();
+                foreach (var target in bases) { Json.ValidateSettings(target.SiteSettings); }
+                if (bases.Select(s => s.ReferenceType).Distinct(StringComparer.Ordinal).Count() != 1)
+                {
+                    notes.Add(new(source.SiteId, origin + "possible bases have different reference types; no candidate generated for this part."));
+                    continue;
+                }
+                if (bases.Any(s => Active(s) || uncertain?.Contains(s.SiteId) == true || s.RecordCount < minRecords))
+                {
+                    notes.Add(new(source.SiteId, origin + "a possible base is below the threshold or has unresolved scripts/extensions; no candidate generated for this part."));
                     continue;
                 }
                 var view = part.Get("View");
@@ -61,11 +81,21 @@ public static class DashboardCalendarPlanner
                 var node = view.ValueKind == JsonValueKind.Object ? JsonNode.Parse(view.GetRawText())!.AsObject() : new JsonObject();
                 node["DefaultMode"] = "Calendar";
                 node["CalendarFromTo"] = part.Get("CalendarFromTo").Text();
-                var plan = new Planner(dbms, minRecords, mysqlPrefix: mysqlPrefix, includePeriodCalendars: periods).AnalyzeCalendarReview(target, Json.Parse(node.ToJsonString()));
-                indexes.AddRange(plan.Indexes); notes.AddRange(plan.Diagnostics);
-                notes.Add(new(source.SiteId, origin + $"{plan.Indexes.Count} saved-part candidates for review only; runtime session/form View conditions and unprovided extensions are not covered."));
+                var savedView = Json.Parse(node.ToJsonString());
+                var plans = bases.Select(target => new Planner(dbms, minRecords, mysqlPrefix: mysqlPrefix, includePeriodCalendars: periods).AnalyzeCalendarReview(target, savedView)).ToArray();
+                var common = plans[0].Indexes.Select(i => i.Signature).ToHashSet(StringComparer.Ordinal);
+                foreach (var plan in plans.Skip(1)) { common.IntersectWith(plan.Indexes.Select(i => i.Signature)); }
+                var representative = bases.Min(s => s.SiteId);
+                var candidates = plans[0].Indexes.Where(i => common.Contains(i.Signature)).Select(i => i with { SiteId = representative }).ToArray();
+                if (bases.Length > 1 && candidates.Length == 0)
+                {
+                    notes.Add(new(source.SiteId, origin + "no physical key definition is shared by all possible bases; no candidate generated for this part."));
+                }
+                indexes.AddRange(candidates); notes.AddRange(plans.SelectMany(p => p.Diagnostics));
+                notes.Add(new(source.SiteId, origin + $"{candidates.Length} saved-part candidates common to {bases.Length} possible bases for review only; the representative index ID is not a resolved runtime base."));
+                notes.Add(new(source.SiteId, origin + "runtime session/form View conditions, name/group expansion, allowed/denied site permissions and unprovided extensions are not covered."));
             }
         }
-        return new(indexes.DistinctBy(i => i.Signature).ToArray(), notes.Distinct().ToArray());
+        return new(indexes.GroupBy(i => i.Signature).Select(g => g.OrderBy(i => i.SiteId).First()).ToArray(), notes.Distinct().ToArray());
     }
 }
