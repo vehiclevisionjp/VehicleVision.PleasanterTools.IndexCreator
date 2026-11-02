@@ -298,7 +298,7 @@ public sealed class Planner(Dbms dbms, long minRecords = 10000, bool includeFilt
             || columns.Length is < 1 or > 2 || columns.Any(c => ColumnKind(c) != Kind.Date || links.Contains(c))
             || columns.Length == 2 && !includePeriodCalendars)
         {
-            Note(s, "Calendar period planning requires an explicit single physical date column without dashboard or active server scripts; no calendar candidate generated.");
+            Note(s, "Calendar planning requires Results or Issues, one explicit physical date column or an opted-in interval pair, without Dashboard parts or active server scripts; no calendar candidate generated.");
             return [];
         }
         if (columns.Length == 2)
