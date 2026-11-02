@@ -26,14 +26,32 @@ internal static class PermissionWorkloadTests
         var groups = new Dictionary<int, bool> { [101] = false, [102] = true, [103] = false, [201] = false, [202] = true, [203] = false };
         var users = new Dictionary<int, bool> { [1001] = false, [1002] = true, [1003] = false, [2001] = false };
         var members = new (int Group, int Dept, int User, bool Child)[] { (101, 11, 0, false), (101, 11, 0, true), (103, 0, 1001, false), (102, 11, 0, false), (201, 21, 0, false), (203, 0, 2001, false) };
-        var permissions = new List<(int Reference, int Dept, int Group, int User, int Permission)>();
+        var permissions = new List<(int Reference, int Dept, int Group, int User, long Permission)>();
+        const long High31 = PermissionStandardKeys.High31; const long High40 = PermissionStandardKeys.High40;
+        const long UpdateDelta = (1L << 34) + 64;
+        const long InsertValue = 4 | High31;
         for (var tenant = 1; tenant <= 2; tenant++)
         {
             for (var reference = 0; reference < 17; reference++)
             {
                 var r = tenant * 1000 + reference; var dept = tenant * 10 + 1; var user = tenant * 1000 + 1; var group = tenant * 100 + 1;
-                permissions.AddRange(new[] { (r, dept, 0, 0, 1), (r, dept, 0, user, 1), (r, 0, group, 0, 2), (r, 0, group + 2, 0, 4), (r, 0, 0, user, 4), (r, 0, 0, -1, 8), (r, 0, group + 1, 0, 16), (r, dept + 1, 0, 0, 32) });
+                permissions.AddRange(new (int, int, int, int, long)[] { (r, dept, 0, 0, 1), (r, dept, 0, user, 1 | High40), (r, 0, group, 0, 2), (r, 0, group + 2, 0, 4 | High31), (r, 0, 0, user, 4), (r, 0, 0, -1, 8 | High40 | High31), (r, 0, group + 1, 0, 16), (r, dept + 1, 0, 0, 32 | High31) });
             }
+        }
+        async Task<long> Scalar(string sql)
+        {
+            await using var cmd = db.CreateCommand(); cmd.CommandText = sql; cmd.Transaction = transaction; return Convert.ToInt64(await cmd.ExecuteScalarAsync());
+        }
+        async Task<string> Snapshot()
+        {
+            var text = new List<string>();
+            foreach (var sql in new[] { $"SELECT {Q("ReferenceId")},{Q("DeptId")},{Q("GroupId")},{Q("UserId")},{Q("PermissionType")} FROM {T("Permissions")} ORDER BY 1,2,3,4", $"SELECT {Q("SiteId")},{Q("InheritPermission")},{Q("TenantId")},0,0 FROM {T("Sites")} ORDER BY 1" })
+            {
+                await using var cmd = db.CreateCommand(); cmd.CommandText = sql; await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync()) { text.Add(string.Join(',', Enumerable.Range(0, 5).Select(i => Convert.ToInt64(reader.GetValue(i))))); }
+                text.Add("|");
+            }
+            return string.Join(';', text);
         }
         var reports = new List<object>();
         var writes = new List<object>();
@@ -49,17 +67,20 @@ internal static class PermissionWorkloadTests
         {
             var definitions = new[]
             {
-                ("Sites", $"{Q("TenantId")} int NOT NULL,{Q("SiteId")} bigint NOT NULL,{Q("UpdatedTime")} {date} NOT NULL,{Q("InheritPermission")} bigint NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("SiteId")},{Q("UpdatedTime")})"),
-                ("Permissions", $"{Q("ReferenceId")} bigint NOT NULL,{Q("DeptId")} int NOT NULL,{Q("GroupId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("PermissionType")} int NOT NULL,PRIMARY KEY({Q("ReferenceId")},{Q("DeptId")},{Q("GroupId")},{Q("UserId")})"),
-                ("Depts", $"{Q("TenantId")} int NOT NULL,{Q("DeptId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("DeptId")})"),
-                ("Groups", $"{Q("TenantId")} int NOT NULL,{Q("GroupId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("GroupId")})"),
-                ("Users", $"{Q("TenantId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("UserId")})"),
-                ("GroupMembers", $"{Q("GroupId")} int NOT NULL,{Q("DeptId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("ChildGroup")} {boolean} NOT NULL,PRIMARY KEY({Q("GroupId")},{Q("DeptId")},{Q("UserId")},{Q("ChildGroup")})"),
-                ("GroupChildren", $"{Q("GroupId")} int NOT NULL,{Q("ChildId")} int NOT NULL,PRIMARY KEY({Q("GroupId")},{Q("ChildId")})")
+                ("Sites", $"{Q("TenantId")} int NOT NULL,{Q("SiteId")} bigint NOT NULL,{Q("UpdatedTime")} {date} NOT NULL,{Q("InheritPermission")} bigint NOT NULL,{PermissionStandardKeys.PrimaryKeySql(dbms, dialect, "Sites")}"),
+                ("Permissions", $"{Q("ReferenceId")} bigint NOT NULL,{Q("DeptId")} int NOT NULL,{Q("GroupId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("PermissionType")} bigint NOT NULL,{PermissionStandardKeys.PrimaryKeySql(dbms, dialect, "Permissions")}"),
+                ("Depts", $"{Q("TenantId")} int NOT NULL,{Q("DeptId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,{PermissionStandardKeys.PrimaryKeySql(dbms, dialect, "Depts")}"),
+                ("Groups", $"{Q("TenantId")} int NOT NULL,{Q("GroupId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,{PermissionStandardKeys.PrimaryKeySql(dbms, dialect, "Groups")}"),
+                ("Users", $"{Q("TenantId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,{PermissionStandardKeys.PrimaryKeySql(dbms, dialect, "Users")}"),
+                ("GroupMembers", $"{Q("GroupId")} int NOT NULL,{Q("DeptId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("ChildGroup")} {boolean} NOT NULL,{PermissionStandardKeys.PrimaryKeySql(dbms, dialect, "GroupMembers")}"),
+                ("GroupChildren", $"{Q("GroupId")} int NOT NULL,{Q("ChildId")} int NOT NULL,{PermissionStandardKeys.PrimaryKeySql(dbms, dialect, "GroupChildren")}")
             };
             foreach (var (name, columns) in definitions) { await Execute($"CREATE TABLE {T(name)} ({columns})"); created.Add(name); }
-            var standard = new[] { ("Sites", "SiteId"), ("Depts", "Disabled"), ("Groups", "Disabled"), ("Users", "UserId,TenantId"), ("GroupMembers", "DeptId,GroupId"), ("GroupMembers", "UserId,GroupId"), ("GroupMembers", "GroupId"), ("GroupChildren", "ChildId,GroupId") };
-            for (var i = 0; i < standard.Length; i++) { var (name, columns) = standard[i]; await Execute($"CREATE INDEX {Q("permission_standard_" + i)} ON {T(name)} ({string.Join(',', columns.Split(',').Select(Q))})"); }
+            foreach (var table in created.ToArray())
+            {
+                foreach (var index in PermissionStandardKeys.IndexSql(dbms, dialect, table, "PermissionWorkload").Select(i => i.Sql).ToArray()) { await Execute(index); }
+            }
+            await PermissionStandardKeys.Verify(db, dbms, dialect, "PermissionWorkload", created, check);
             await Execute($"INSERT INTO {T("Sites")} VALUES " + string.Join(',', sites.Select(s => $"({s.Tenant},{s.Id},'2026-01-01',{s.Reference})")));
             await Execute($"INSERT INTO {T("Permissions")} VALUES " + string.Join(',', permissions.Select(p => $"({p.Reference},{p.Dept},{p.Group},{p.User},{p.Permission})")));
             await Execute($"INSERT INTO {T("Depts")} VALUES " + string.Join(',', departments.Select(p => $"({p.Key / 10},{p.Key},{(p.Value ? yes : no)})")));
@@ -67,6 +88,8 @@ internal static class PermissionWorkloadTests
             await Execute($"INSERT INTO {T("Users")} VALUES " + string.Join(',', users.Select(p => $"({p.Key / 1000},{p.Key},{(p.Value ? yes : no)})")));
             await Execute($"INSERT INTO {T("GroupMembers")} VALUES " + string.Join(',', members.Select(m => $"({m.Group},{m.Dept},{m.User},{(m.Child ? yes : no)})")));
             await Execute($"INSERT INTO {T("GroupChildren")} VALUES (101,103),(201,203)");
+            var baseline = await Snapshot();
+            check(baseline.Contains((8L | High40 | High31).ToString(), StringComparison.Ordinal), "Wide permission values are stored and read as 64-bit on " + dbms);
             foreach (var reverse in new[] { false, true })
             {
                 await using var childQuery = db.CreateCommand();
@@ -128,8 +151,8 @@ internal static class PermissionWorkloadTests
                             {
                                 var write = workload switch
                                 {
-                                    "insert-grants" => $"INSERT INTO {T("Permissions")} VALUES " + string.Join(',', Enumerable.Range(9001, 100).Select(id => $"({id},0,0,1001,4)")),
-                                    "update-grants" => $"UPDATE {T("Permissions")} SET {Q("PermissionType")}={Q("PermissionType")}+64",
+                                    "insert-grants" => $"INSERT INTO {T("Permissions")} VALUES " + string.Join(',', Enumerable.Range(9001, 100).Select(id => $"({id},0,0,1001,{InsertValue})")),
+                                    "update-grants" => $"UPDATE {T("Permissions")} SET {Q("PermissionType")}={Q("PermissionType")}+{UpdateDelta}",
                                     "delete-grants" => $"DELETE FROM {T("Permissions")} WHERE {Q("ReferenceId")}=1000",
                                     _ => $"UPDATE {T("Sites")} SET {Q("InheritPermission")}={Q("InheritPermission")}+10000 WHERE {Q("TenantId")}=1"
                                 };
@@ -145,6 +168,15 @@ internal static class PermissionWorkloadTests
                                     _ => sites.Count(s => s.Tenant == 1)
                                 };
                                 check(affected == expectedCount, "Permission write row count on " + dbms);
+                                // 32bitを超える値が更新後も保持されること（時間には含めない）。
+                                if (committed) { transaction = null; }
+                                var wide = workload switch
+                                {
+                                    "insert-grants" => await Scalar($"SELECT COUNT(*) FROM {T("Permissions")} WHERE {Q("ReferenceId")}>=9001 AND {Q("PermissionType")}={InsertValue}"),
+                                    "update-grants" => await Scalar($"SELECT SUM({Q("PermissionType")}) FROM {T("Permissions")}"),
+                                    _ => -1L
+                                };
+                                check(workload is "delete-grants" or "update-inheritance" || wide == (workload == "insert-grants" ? 100 : permissions.Sum(p => p.Permission) + UpdateDelta * permissions.Count), "Permission values above 32 bits survive " + workload + " on " + dbms);
                                 if (sample > 0) { writes.Add(new { Phase = phase, Workload = workload, Mode = mode, Sample = sample, ClientMs = timer.Elapsed.TotalMilliseconds }); }
                             }
                             finally
@@ -156,22 +188,24 @@ internal static class PermissionWorkloadTests
                                     var restore = workload switch
                                     {
                                         "insert-grants" => $"DELETE FROM {T("Permissions")} WHERE {Q("ReferenceId")}>=9001",
-                                        "update-grants" => $"UPDATE {T("Permissions")} SET {Q("PermissionType")}={Q("PermissionType")}-64",
+                                        "update-grants" => $"UPDATE {T("Permissions")} SET {Q("PermissionType")}={Q("PermissionType")}-{UpdateDelta}",
                                         "delete-grants" => $"INSERT INTO {T("Permissions")} VALUES " + string.Join(',', permissions.Where(p => p.Reference == 1000).Select(p => $"({p.Reference},{p.Dept},{p.Group},{p.User},{p.Permission})")),
                                         _ => $"UPDATE {T("Sites")} SET {Q("InheritPermission")}={Q("InheritPermission")}-10000 WHERE {Q("TenantId")}=1"
                                     };
                                     await Execute(restore);
                                 }
+                                var restored = await Snapshot();
+                                check(restored == baseline, "Permissions and Sites are restored exactly after " + workload + " on " + dbms);
                             }
                         }
                     }
                 }
                 foreach (var context in new (int Tenant, int Dept, int User)[] { (1, 11, 1001), (1, 0, 1003), (2, 21, 2001), (1, 12, 1002) })
                 {
-                    var expected = new List<(long Id, int Permission)>();
+                    var expected = new List<(long Id, long Permission)>();
                     for (var branch = 0; branch < 5; branch++)
                     {
-                        bool Matches((int Reference, int Dept, int Group, int User, int Permission) p) => branch switch
+                        bool Matches((int Reference, int Dept, int Group, int User, long Permission) p) => branch switch
                         {
                             0 => p.Dept == context.Dept && !departments.GetValueOrDefault(context.Dept, true),
                             1 => !groups.GetValueOrDefault(p.Group, true) && !departments.GetValueOrDefault(context.Dept, true) && members.Any(m => m.Group == p.Group && m.Dept == context.Dept),
@@ -185,8 +219,8 @@ internal static class PermissionWorkloadTests
                     for (var sample = 0; sample < 6; sample++)
                     {
                         await using var cmd = db.CreateCommand(); cmd.CommandText = sql; Bind(cmd, context.Tenant, context.Dept, context.User);
-                        var timer = Stopwatch.StartNew(); await using var reader = await cmd.ExecuteReaderAsync(); var actual = new List<(long, int)>();
-                        while (await reader.ReadAsync()) { actual.Add((Convert.ToInt64(reader.GetValue(0)), Convert.ToInt32(reader.GetValue(1)))); }
+                        var timer = Stopwatch.StartNew(); await using var reader = await cmd.ExecuteReaderAsync(); var actual = new List<(long, long)>();
+                        while (await reader.ReadAsync()) { actual.Add((Convert.ToInt64(reader.GetValue(0)), Convert.ToInt64(reader.GetValue(1)))); }
                         timer.Stop(); check(actual.SequenceEqual(ordered), "Five permission branches preserve tenant, disabled and duplicate semantics: " + dbms + phase);
                         if (sample > 0) { times.Add(timer.Elapsed.TotalMilliseconds); }
                     }
