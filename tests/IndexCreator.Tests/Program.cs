@@ -420,6 +420,7 @@ if (args.Contains("--integration"))
     await AdminWorkloadTests.Run(dbms, cs, d, Check);
     await AdminDirectoryWorkloadTests.Run(dbms, cs, d, Check);
     await SitesWorkloadTests.Run(dbms, cs, d, Check);
+    await SysLogsWorkloadTests.Run(dbms, cs, d, Check);
     await GanttWorkloadTests.Run(dbms, cs, d, Check);
     await PeriodCalendarWorkloadTests.Run(dbms, cs, d, Check);
     await PermissionWorkloadTests.Run(dbms, cs, d, Check);
