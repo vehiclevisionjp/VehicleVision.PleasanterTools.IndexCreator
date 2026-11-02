@@ -13,6 +13,8 @@ internal static class DashboardCalendarTests
             var plan = Plan(part);
             check(plan.Indexes.Single().SiteId == 10 && plan.Indexes.Single().Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Manager", "DateA"]), "Dashboard uses canonical target and part equality on " + db);
             check(plan.Diagnostics.Any(n => n.Message.Contains("runtime session/form")), "Dashboard runtime coverage is explicit on " + db);
+            check(Plan(part, target with { SiteSettings = Json.Parse("""{"ServerScriptsAllDisabled":true,"ServerScripts":[{}]}""") }).Indexes.Count == 1, "Dashboard base honors global script disable: " + db);
+            check(Plan(part, target with { SiteSettings = Json.Parse("""{"ServerScriptsAllDisabled":false,"ServerScripts":[{}]}""") }).Indexes.Count == 0, "Dashboard base still excludes enabled scripts: " + db);
             check(Plan(part.Replace("\"SiteId\":999", "\"SiteId\":999,\"CalendarSitesData\":[\"20\"]")).Indexes.Count == 0, "Conflicting cached Dashboard targets are rejected on " + db);
             check(Plan(part.Replace("\"CalendarSites\":\"10\",", "")).Indexes.Count == 0, "Runtime SiteId alone never identifies a saved target on " + db);
             var interval = Source(part.Replace("DateA\"", "DateA-DateB\""));
