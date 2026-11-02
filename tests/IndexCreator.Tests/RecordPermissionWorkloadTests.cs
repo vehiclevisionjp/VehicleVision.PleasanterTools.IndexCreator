@@ -6,7 +6,7 @@ using VehicleVision.PleasanterTools.IndexCreator;
 internal static class RecordPermissionWorkloadTests
 {
     private sealed record Item(int Id, int Site);
-    private sealed record Grant(int Reference, int Dept, int Group, int User, int Mask);
+    private sealed record Grant(int Reference, int Dept, int Group, int User, long Mask);
 
     public static async Task Run(Dbms dbms, string connection, SqlDialect d, Action<bool, string> check)
     {
@@ -16,7 +16,8 @@ internal static class RecordPermissionWorkloadTests
         string T(string s) => d.Table("RecordPermission" + s);
         var boolean = dbms == Dbms.SQLServer ? "bit" : "boolean";
         var no = dbms == Dbms.PostgreSQL ? "FALSE" : "0";
-        var date = dbms == Dbms.SQLServer ? "datetime2" : "timestamp";
+        var date = dbms == Dbms.SQLServer ? "datetime" : dbms == Dbms.MySQL ? "datetime(3)" : "timestamp";
+        string MasterPk(string id) => dbms == Dbms.MySQL ? Q(id) : Q("TenantId") + "," + Q(id);
         DbTransaction? transaction = null;
         async Task<int> Execute(string sql)
         {
@@ -33,12 +34,13 @@ internal static class RecordPermissionWorkloadTests
             members.AddRange(new[] { (tenant * 100 + 1, tenant * 10 + 1, 0, false), (tenant * 100 + 1, tenant * 10 + 1, 0, true), (tenant * 100 + 2, tenant * 10 + 1, 0, false), (tenant * 100 + 3, 0, tenant * 1000 + 1, false), (tenant * 100 + 4, 0, tenant * 1000 + 2, false) });
         }
         var tables = new List<string>();
-        void Bind(DbCommand command, int tenant, int dept, int user, int mask)
+        void Bind(DbCommand command, int tenant, int dept, int user, long mask)
         {
-            foreach (var (name, value) in new[] { ("@tenant", tenant), ("@dept", dept), ("@user", user), ("@mask", mask) })
+            foreach (var (name, value) in new[] { ("@tenant", tenant), ("@dept", dept), ("@user", user) })
             {
                 var p = command.CreateParameter(); p.ParameterName = name; p.DbType = System.Data.DbType.Int32; p.Value = value; command.Parameters.Add(p);
             }
+            var maskParameter = command.CreateParameter(); maskParameter.ParameterName = "@mask"; maskParameter.DbType = System.Data.DbType.Int64; maskParameter.Value = mask; command.Parameters.Add(maskParameter);
         }
         string GrantValues(Grant p) => $"({p.Reference},{p.Dept},{p.Group},{p.User},{p.Mask})";
         string ItemValues(Item item) => $"({item.Id},{item.Site})";
@@ -46,17 +48,26 @@ internal static class RecordPermissionWorkloadTests
         {
             var definitions = new[]
             {
-                ("Sites",$"{Q("TenantId")} int NOT NULL,{Q("SiteId")} bigint NOT NULL,{Q("UpdatedTime")} {date} NOT NULL,{Q("InheritPermission")} bigint NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("SiteId")},{Q("UpdatedTime")})"),
+                ("Sites",$"{Q("TenantId")} int NOT NULL,{Q("SiteId")} bigint NOT NULL,{Q("UpdatedTime")} {date} NOT NULL,{Q("InheritPermission")} bigint NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("SiteId")},{Q("UpdatedTime")}{(dbms == Dbms.PostgreSQL ? "" : " DESC")} )"),
                 ("Items",$"{Q("ReferenceId")} bigint NOT NULL PRIMARY KEY,{Q("SiteId")} bigint NOT NULL"),
                 ("Permissions",$"{Q("ReferenceId")} bigint NOT NULL,{Q("DeptId")} int NOT NULL,{Q("GroupId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("PermissionType")} bigint NOT NULL,PRIMARY KEY({Q("ReferenceId")},{Q("DeptId")},{Q("GroupId")},{Q("UserId")})"),
-                ("Depts",$"{Q("TenantId")} int NOT NULL,{Q("DeptId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("DeptId")})"),
-                ("Groups",$"{Q("TenantId")} int NOT NULL,{Q("GroupId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("GroupId")})"),
-                ("Users",$"{Q("TenantId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({Q("TenantId")},{Q("UserId")})"),
+                ("Depts",$"{Q("TenantId")} int NOT NULL,{Q("DeptId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({MasterPk("DeptId")})"),
+                ("Groups",$"{Q("TenantId")} int NOT NULL,{Q("GroupId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({MasterPk("GroupId")})"),
+                ("Users",$"{Q("TenantId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("Disabled")} {boolean} NOT NULL,PRIMARY KEY({MasterPk("UserId")})"),
                 ("GroupMembers",$"{Q("GroupId")} int NOT NULL,{Q("DeptId")} int NOT NULL,{Q("UserId")} int NOT NULL,{Q("ChildGroup")} {boolean} NOT NULL,PRIMARY KEY({Q("GroupId")},{Q("DeptId")},{Q("UserId")},{Q("ChildGroup")})")
             };
             foreach (var (name, columns) in definitions) { await Execute($"CREATE TABLE {T(name)} ({columns})"); tables.Add(name); }
             var standard = new[] { ("Sites", "SiteId"), ("Items", "SiteId,ReferenceId"), ("Depts", "Disabled"), ("Groups", "Disabled"), ("Users", "UserId,TenantId"), ("GroupMembers", "DeptId,GroupId"), ("GroupMembers", "UserId,GroupId"), ("GroupMembers", "GroupId") };
-            for (var i = 0; i < standard.Length; i++) { var (name, keys) = standard[i]; await Execute($"CREATE INDEX {Q("record_standard_" + i)} ON {T(name)} ({string.Join(',', keys.Split(',').Select(Q))})"); }
+            for (var i = 0; i < standard.Length; i++) { var (name, keys) = standard[i]; await Execute($"CREATE {(name == "Sites" ? "UNIQUE " : "")}INDEX {Q("record_standard_" + i)} ON {T(name)} ({string.Join(',', keys.Split(',').Select(Q))})"); }
+            if (dbms == Dbms.MySQL)
+            {
+                foreach (var kind in new[] { "Depts", "Groups", "Users" })
+                {
+                    var id = kind[..^1] + "Id";
+                    await Execute($"CREATE INDEX {Q("record_mysql_" + kind)} ON {T(kind)} ({Q("TenantId")},{Q(id)})");
+                }
+            }
+            var baseline = await PermissionBaseline.Verify(db, dbms, "RecordPermission", tables, check);
             await Execute($"INSERT INTO {T("Sites")} VALUES " + string.Join(',', sites.Select(s => $"({s.Tenant},{s.Id},'2026-01-01',{s.Reference})")));
             foreach (var (name, data, divisor) in new[] { ("Depts", departments, 10), ("Groups", groups, 100), ("Users", users, 1000) })
             {
@@ -93,13 +104,13 @@ internal static class RecordPermissionWorkloadTests
             };
             var contexts = new[]
             {
-                (Name:"department-duplicates",Tenant:1,Dept:11,User:1001,Id:10001,Site:10,Mask:1),
+                (Name:"department-duplicates",Tenant:1,Dept:11,User:1001,Id:10001,Site:10,Mask:1L),
                 (Name:"group-members",Tenant:1,Dept:11,User:1001,Id:10002,Site:10,Mask:2),
-                (Name:"public-reference",Tenant:1,Dept:0,User:1003,Id:10004,Site:10,Mask:32),
-                (Name:"disabled-principals",Tenant:1,Dept:12,User:1002,Id:10005,Site:10,Mask:32),
+                (Name:"public-reference",Tenant:1,Dept:0,User:1003,Id:10004,Site:10,Mask:(1L << 40) | 32),
+                (Name:"disabled-principals",Tenant:1,Dept:12,User:1002,Id:10005,Site:10,Mask:(1L << 40) | 32),
                 (Name:"disabled-user-membership",Tenant:1,Dept:0,User:1002,Id:10006,Site:10,Mask:64),
-                (Name:"zero-principals",Tenant:1,Dept:0,User:0,Id:10007,Site:10,Mask:1),
-                (Name:"inheritance-only",Tenant:1,Dept:0,User:1003,Id:10008,Site:10,Mask:1),
+                (Name:"zero-principals",Tenant:1,Dept:0,User:0,Id:10007,Site:10,Mask:1L),
+                (Name:"inheritance-only",Tenant:1,Dept:0,User:1003,Id:10008,Site:10,Mask:1L),
                 (Name:"other-tenant",Tenant:2,Dept:21,User:2001,Id:10010,Site:30,Mask:2),
                 (Name:"tenant-boundary",Tenant:1,Dept:11,User:1001,Id:10010,Site:10,Mask:2),
                 (Name:"missing-item",Tenant:1,Dept:11,User:1001,Id:999999,Site:10,Mask:4),
@@ -123,7 +134,7 @@ internal static class RecordPermissionWorkloadTests
                         1 => new[] { new Grant(item.Id, dept, 0, 0, 1), new(item.Id, dept, 0, user, 1) },
                         2 => [new Grant(item.Id, 0, group, 0, 2), new(item.Id, 0, group + 2, 0, 4)],
                         3 => [new Grant(item.Id, 0, 0, user, 4)],
-                        4 => [new Grant(item.Id, 0, 0, -1, 8), new(item.Id, 0, 0, 9999, 32)],
+                        4 => [new Grant(item.Id, 0, 0, -1, (1L << 40) | 8), new(item.Id, 0, 0, 9999, (1L << 40) | 32)],
                         5 => [new Grant(item.Id, dept + 1, 0, 0, 16), new(item.Id, 0, group + 1, 0, 32)],
                         6 => [new Grant(item.Id, 0, group + 3, 0, 64)],
                         7 => [new Grant(item.Id, dept, 0, 0, 1), new(item.Id, 0, 0, user, 2), new(item.Id, 0, 0, -1, 4)],
@@ -166,7 +177,7 @@ internal static class RecordPermissionWorkloadTests
                             3 => p.User > 0 && p.User == context.User,
                             _ => p.User == -1
                         };
-                        var expected = new List<(long Id, int Mask)>();
+                        var expected = new List<(long Id, long Mask)>();
                         for (var branch = 0; branch < 5; branch++)
                         {
                             expected.AddRange(sites.Where(s => s.Tenant == context.Tenant).SelectMany(s => grants.Where(p => p.Reference == s.Reference && Matches(p, branch)).Select(p => ((long)s.Id, p.Mask))).Distinct());
@@ -196,10 +207,10 @@ internal static class RecordPermissionWorkloadTests
                             {
                                 await using var command = db.CreateCommand(); command.CommandText = query.Sql; Bind(command, context.Tenant, context.Dept, context.User, context.Mask);
                                 var timer = Stopwatch.StartNew(); await using var reader = await command.ExecuteReaderAsync();
-                                var actual = new List<(long Id, int Mask)>();
-                                while (await reader.ReadAsync()) { actual.Add((Convert.ToInt64(reader.GetValue(0)), query.Name == "combined-rows" ? Convert.ToInt32(reader.GetValue(1)) : 0)); }
+                                var actual = new List<(long Id, long Mask)>();
+                                while (await reader.ReadAsync()) { actual.Add((Convert.ToInt64(reader.GetValue(0)), query.Name == "combined-rows" ? Convert.ToInt64(reader.GetValue(1)) : 0L)); }
                                 timer.Stop();
-                                check(query.Name == "combined-rows" ? actual.OrderBy(p => p.Id).ThenBy(p => p.Mask).SequenceEqual(expected.OrderBy(p => p.Id).ThenBy(p => p.Mask)) : actual.SequenceEqual(new[] { (exists ? 1L : 0L, 0) }), "Record permission result: " + dbms + phase + context.Name + query.Name);
+                                check(query.Name == "combined-rows" ? actual.OrderBy(p => p.Id).ThenBy(p => p.Mask).SequenceEqual(expected.OrderBy(p => p.Id).ThenBy(p => p.Mask)) : actual.SequenceEqual(new[] { (exists ? 1L : 0L, 0L) }), "Record permission result: " + dbms + phase + context.Name + query.Name);
                                 if (sample > 0) { times.Add(timer.Elapsed.TotalMilliseconds); }
                             }
                             await using var plan = db.CreateCommand(); Bind(plan, context.Tenant, context.Dept, context.User, context.Mask);
@@ -260,13 +271,13 @@ internal static class RecordPermissionWorkloadTests
                     {
                         verify.CommandText = $"SELECT {Q("ReferenceId")},{Q("DeptId")},{Q("GroupId")},{Q("UserId")},{Q("PermissionType")} FROM {T("Permissions")}";
                         await using var reader = await verify.ExecuteReaderAsync(); var actual = new List<Grant>();
-                        while (await reader.ReadAsync()) { actual.Add(new(Convert.ToInt32(reader.GetValue(0)), Convert.ToInt32(reader.GetValue(1)), Convert.ToInt32(reader.GetValue(2)), Convert.ToInt32(reader.GetValue(3)), Convert.ToInt32(reader.GetValue(4)))); }
+                        while (await reader.ReadAsync()) { actual.Add(new(Convert.ToInt32(reader.GetValue(0)), Convert.ToInt32(reader.GetValue(1)), Convert.ToInt32(reader.GetValue(2)), Convert.ToInt32(reader.GetValue(3)), Convert.ToInt64(reader.GetValue(4)))); }
                         IOrderedEnumerable<Grant> Ordered(IEnumerable<Grant> data) => data.OrderBy(p => p.Reference).ThenBy(p => p.Dept).ThenBy(p => p.Group).ThenBy(p => p.User);
                         check(Ordered(actual).SequenceEqual(Ordered(grants)), "Record permission full grant restoration: " + dbms);
                     }
                 }
                 foreach (var candidate in candidates.Where(c => c.Table == "Permissions")) { await Execute(d.Drop("RecordPermission" + candidate.Table, candidate.Name)); }
-                await File.WriteAllTextAsync(Path.Combine(AppContext.BaseDirectory, $"record-permission-{dbms}-{scenario}.json"), JsonSerializer.Serialize(new { Reports = reports, Writes = writes, IndexSizes = sizes }));
+                await File.WriteAllTextAsync(Path.Combine(AppContext.BaseDirectory, $"record-permission-{dbms}-{scenario}.json"), JsonSerializer.Serialize(new { BaselineVersion = 2, Baseline = baseline, Reports = reports, Writes = writes, IndexSizes = sizes }));
             }
         }
         finally { foreach (var name in tables.AsEnumerable().Reverse()) { await Execute("DROP TABLE " + T(name)); } }
