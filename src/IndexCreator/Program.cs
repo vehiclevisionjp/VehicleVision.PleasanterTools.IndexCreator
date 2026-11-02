@@ -124,7 +124,7 @@ public static class Program
             {
                 var dashboardPlan = DashboardCalendarPlanner.Analyze(dashboards, sites, config.Dbms, options.MinRecords, options.MysqlPrefix, options.IncludePeriodCalendars, uncertainDashboardSites);
                 analysis = new(analysis.Indexes.Concat(dashboardPlan.Indexes).DistinctBy(i => i.Signature).ToArray(), analysis.Diagnostics.Concat(dashboardPlan.Diagnostics).ToArray());
-                RuntimeLog.WriteLine($"Dashboard inputs: {dashboards.Count} saved sites. Only explicit single-target saved Calendar parts are reviewed; runtime context is not covered.");
+                RuntimeLog.WriteLine($"Dashboard inputs: {dashboards.Count} saved sites. Only common keys across explicit numeric target bases of saved Calendar parts are reviewed; runtime context is not covered.");
             }
             if (options.IncludeSiteDelta)
             {

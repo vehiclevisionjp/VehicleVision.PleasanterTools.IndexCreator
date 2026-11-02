@@ -27,6 +27,18 @@ internal static class CalendarTests
                 {
                     check(new Planner(db).Analyze([Make(view, extra)]).Diagnostics.Any(d => d.Message.Contains("no calendar candidate")), "Dynamic Calendar excluded on " + db);
                 }
+                const string disabled = ",\"ServerScriptsAllDisabled\":true,\"ServerScripts\":[{}]";
+                check(new Planner(db).Analyze([Make(view, disabled)]).Indexes.Any(i => i.Keys.Select(k => k.Column).SequenceEqual(["SiteId", "Manager", "DateA"])), "Global script disable allows saved Calendar: " + db + table);
+                check(new Planner(db).AnalyzeCalendarReview(Make(view, disabled), Json.Parse(view)).Indexes.Any(i => i.Keys.Last().Column == "DateA"), "Global script disable allows Calendar base review: " + db + table);
+                check(!new Planner(db).Analyze([Make(view, disabled.Replace(":true", ":false"))]).Indexes.Any(i => i.Keys.Last().Column == "DateA"), "Explicitly enabled scripts still block Calendar: " + db + table);
+                check(new Planner(db).Analyze([Make(view, ",\"ServerScripts\":[{\"Disabled\":true}]")]).Indexes.Any(i => i.Keys.Last().Column == "DateA"), "Individually disabled scripts allow Calendar: " + db + table);
+                const string intervalView = """{"DefaultMode":"Calendar","CalendarFromTo":"DateA-DateB"}""";
+                var disabledInterval = Make(intervalView, disabled);
+                check(new Planner(db, includePeriodCalendars: true).Analyze([disabledInterval]).Indexes.Count(i => i.Keys.Last().Column is "DateA" or "DateB") == 2, "Global script disable allows interval opt-in: " + db + table);
+                check(!new Planner(db, includePeriodCalendars: true).Analyze([Make(intervalView, disabled.Replace(":true", ":false"))]).Indexes.Any(i => i.Keys.Last().Column is "DateA" or "DateB"), "Enabled scripts still block Calendar interval review: " + db + table);
+                check(new Planner(db, includePeriodCalendars: true).Analyze([Make(intervalView, ",\"ServerScripts\":[{\"Disabled\":true}]")]).Indexes.Count(i => i.Keys.Last().Column is "DateA" or "DateB") == 2, "Individually disabled scripts allow Calendar interval review: " + db + table);
+                check(!new Planner(db).Analyze([disabledInterval]).Indexes.Any(i => i.Keys.Last().Column is "DateA" or "DateB"), "Global script disable does not bypass interval opt-in: " + db + table);
+                check(!new Planner(db).AnalyzeQuery(Make(view, disabled), Json.Parse(view)).Indexes.Any(i => i.Keys.Last().Column == "DateA"), "Global script disable does not mix Calendar into general API: " + db + table);
                 check(!new Planner(db, 30000).Analyze([site]).Indexes.Any(), "Calendar threshold on " + db);
                 check(new Planner(db).Analyze([Make("""{"DefaultMode":"Calendar","CalendarFromTo":"DateA","Own":true}""")]).Indexes.Count(i => i.Keys.Last().Column == "DateA") == 2, "Calendar Own branches on " + db);
             }
