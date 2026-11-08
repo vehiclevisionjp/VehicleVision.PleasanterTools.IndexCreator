@@ -56,10 +56,11 @@ function highestPatch(current, candidates) {
   for (const candidate of candidates) {
     const v = parse(candidate);
     if (v && v.major === cur.major && v.minor === cur.minor && v.patch > cur.patch && (!best || v.patch > best.v.patch)) {
-      best = { v, text: candidate };
+      best = { v };
     }
   }
-  return best?.text ?? null;
+  // レジストリの文字列をそのまま使わず、検査済みの数字から版を作り直す（外部の入力をファイルへ流さない）
+  return best ? `${best.v.major}.${best.v.minor}.${best.v.patch}` : null;
 }
 
 const ignore = new Set(
@@ -89,9 +90,15 @@ async function fetchJson(url, headers = {}) {
 }
 
 const npmCache = new Map();
+// パッケージ名・ID は、ファイルから読んだ値をリクエストの URL に使うので、使える文字だけに絞る
+const SAFE_NAME = /^[A-Za-z0-9@._~/-]+$/;
+
 async function npmVersions(name) {
+  if (!SAFE_NAME.test(name)) {
+    return [];
+  }
   if (!npmCache.has(name)) {
-    const doc = await fetchJson(`https://registry.npmjs.org/${name.replace('/', '%2F')}`, {
+    const doc = await fetchJson(`https://registry.npmjs.org/${name.replaceAll('/', '%2F')}`, {
       Accept: 'application/vnd.npm.install-v1+json',
     });
     const versions = doc?.versions ?? {};
@@ -103,6 +110,9 @@ async function npmVersions(name) {
 
 const nugetCache = new Map();
 async function nugetVersions(id) {
+  if (!SAFE_NAME.test(id)) {
+    return [];
+  }
   const key = id.toLowerCase();
   if (!nugetCache.has(key)) {
     const doc = await fetchJson(`https://api.nuget.org/v3-flatcontainer/${key}/index.json`);
@@ -209,14 +219,19 @@ function noticeCheck() {
 }
 
 function fixNotice() {
-  if (!fs.existsSync('scripts/notice-check.sh') || !fs.existsSync('NOTICE')) {
+  if (!fs.existsSync('scripts/notice-check.sh')) {
+    return true;
+  }
+  let raw;
+  try {
+    raw = fs.readFileSync('NOTICE', 'utf8');
+  } catch {
     return true;
   }
   let check = noticeCheck();
   if (check.ok) {
     return true;
   }
-  const raw = fs.readFileSync('NOTICE', 'utf8');
   const eol = raw.includes('\r\n') ? '\r\n' : '\n';
   let text = raw.replace(/\r\n/g, '\n');
   for (const m of check.output.matchAll(/^\s*NG\s+(\S+)\s+(\S+)\s+が NOTICE に見当たらない/gm)) {
