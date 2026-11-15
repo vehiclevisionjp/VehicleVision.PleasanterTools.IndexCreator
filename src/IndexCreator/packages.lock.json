@@ -4,9 +4,9 @@
     "net10.0": {
       "Acornima": {
         "type": "Direct",
-        "requested": "[1.9.1, )",
-        "resolved": "1.9.1",
-        "contentHash": "8dzVWz1AMyCaHq1DRU+qjNGd6jZyc4BgUBhl0qqdG0y+C02f2JASQaobF+O6A9vrW2QZL5Kx2q6V/KP3Q2LU+A=="
+        "requested": "[1.9.2, )",
+        "resolved": "1.9.2",
+        "contentHash": "Nze/Lev8jf+ZB42rVb77pMyiwupDItiZyG7kWdP5O254nXt+EmJSgA8uGya72FjoxAyJ7/1TUqafvPrBlQiWsw=="
       },
       "Microsoft.Data.SqlClient": {
         "type": "Direct",
