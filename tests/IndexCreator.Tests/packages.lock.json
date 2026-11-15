@@ -4,8 +4,8 @@
     "net10.0": {
       "Acornima": {
         "type": "Transitive",
-        "resolved": "1.9.1",
-        "contentHash": "8dzVWz1AMyCaHq1DRU+qjNGd6jZyc4BgUBhl0qqdG0y+C02f2JASQaobF+O6A9vrW2QZL5Kx2q6V/KP3Q2LU+A=="
+        "resolved": "1.9.2",
+        "contentHash": "Nze/Lev8jf+ZB42rVb77pMyiwupDItiZyG7kWdP5O254nXt+EmJSgA8uGya72FjoxAyJ7/1TUqafvPrBlQiWsw=="
       },
       "Microsoft.Bcl.Cryptography": {
         "type": "Transitive",
@@ -210,7 +210,7 @@
       "VehicleVision.PleasanterTools.IndexCreator": {
         "type": "Project",
         "dependencies": {
-          "Acornima": "[1.9.1, )",
+          "Acornima": "[1.9.2, )",
           "Microsoft.Data.SqlClient": "[7.1.2, )",
           "MySqlConnector": "[2.6.2, )",
           "NLog": "[6.2.2, )",
