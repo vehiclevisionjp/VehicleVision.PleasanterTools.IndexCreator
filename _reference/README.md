@@ -56,6 +56,6 @@ git -C $env:PLEASANTER_REFERENCE_DIR rev-parse HEAD
 ## 移行の根拠
 
 参照日: 2026-10-27。
-[Template の配布手順](https://github.com/vehiclevisionjp/VehicleVision.PleasanterTools.Template/blob/3312f003fbe9827090e20bc643800824bdf30e22/_documents/参照ソースのオンデマンド取得への配布手順.md)
-（採用コミット: `3312f003fbe9827090e20bc643800824bdf30e22`）に従う。
+共通の配布手順
+（承認済みコミット: `3312f003fbe9827090e20bc643800824bdf30e22`）に従う。
 本体の実装仕様や過去の実機検証結果を更新する変更ではない。
