@@ -45,6 +45,7 @@ GitHub Actions はユーザー指定により @v7 などのメジャーバージ
 選択肢マスタは項目ごとの View とし、列は本体 Choice と同じ Value / Text / TextMini の3列に固定する。
 
 `if` / `else` / `for` / `foreach` / `while` / `using` / `lock` などの本文の `{}` は省略しない。
+用語は、一般に通じるカタカナ語を無理に漢字へ訳さない。「ボタン」を釦と書かず、「プレビュー」「スクリーンショット」「インポート」「エクスポート」を使う（下見・写し・取り込み・書き出しと書かない）。識別子（クラス名・設定名・ファイル名など）は変えない。
 <!-- AGENT-RULES:END -->
 
 NuGet（dotnet tool）は、タグの実行で `release.yml` の `publish-nuget` が nuget.org へ公開する。公開した版は取り消せない。手順は `_documents/リリース手順.md`。
